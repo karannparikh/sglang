@@ -17,7 +17,11 @@ setup(
     description="A High-Fidelity LLM inference simulator for SGLang",
     packages=find_packages(where="src"),
     package_dir={"": "src"},
-    py_modules=["usercustomize"],
+    py_modules=[
+        "_sglang_simulator_startup",
+        "sitecustomize",
+        "usercustomize",
+    ],
     package_data={
         "sglang_simulator.tools.collect_baseline": ["README.md"],
         "sglang_simulator.tools.train_ml_time_predictor": [

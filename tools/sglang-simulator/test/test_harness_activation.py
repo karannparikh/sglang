@@ -3,12 +3,14 @@
 import os
 import shutil
 import subprocess
-import sys
 import textwrap
 import uuid
+import venv
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from sglang_simulator.compat import validate_simulator_server_args
 
 SIMULATOR_SRC = Path(__file__).parents[1] / "src"
 
@@ -33,12 +35,23 @@ def scratch_dir():
             pass
 
 
-def _make_fake_dependencies(scratch_dir: Path) -> tuple[Path, Path]:
-    fake_src = scratch_dir / "fake_src"
-    hook_log = scratch_dir / "hook.log"
+def _make_venv_with_fake_dependencies(scratch_dir: Path) -> Path:
+    venv_dir = scratch_dir / "venv"
+    venv.EnvBuilder(with_pip=False).create(venv_dir)
+    python = venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+    site_packages = Path(
+        subprocess.check_output(
+            [
+                str(python),
+                "-c",
+                "import site; print(site.getsitepackages()[0])",
+            ],
+            text=True,
+        ).strip()
+    )
 
     _write_module(
-        fake_src / "sitecustomize.py",
+        site_packages / "sglang_simulator_test_stubs.py",
         """
         import os
         import sys
@@ -57,6 +70,8 @@ def _make_fake_dependencies(scratch_dir: Path) -> tuple[Path, Path]:
         hook = add_module(sglang_simulator, "sglang_simulator.hook")
 
         def install_class_hooks(_hooks):
+            if os.environ.get("SGLANG_SIMULATOR_TEST_FAIL") == "1":
+                raise RuntimeError("forced hook installation failure")
             hook_log = Path(os.environ["SGLANG_SIMULATOR_HOOK_LOG"])
             with hook_log.open("a", encoding="utf-8") as file:
                 file.write("installed\\n")
@@ -82,87 +97,86 @@ def _make_fake_dependencies(scratch_dir: Path) -> tuple[Path, Path]:
             sglang_package,
             "sglang_simulator.simulation.sglang.sgl_kernel_hook",
         )
-
-        def install_load_utils_stub():
-            return None
-        sgl_kernel_hook.install_load_utils_stub = install_load_utils_stub
+        sgl_kernel_hook.install_load_utils_stub = lambda: None
         """,
     )
-
-    return fake_src, hook_log
-
-
-def _make_subprocess_env(scratch_dir: Path) -> tuple[dict[str, str], Path]:
-    fake_src, hook_log = _make_fake_dependencies(scratch_dir)
-    env = os.environ.copy()
-    env.pop("SGLANG_SIMULATOR_AUTO_ACTIVATE", None)
-    env.pop("SGLANG_SIMULATOR_BOOTSTRAP", None)
-    env["PYTHONPATH"] = os.pathsep.join(
-        [
-            str(fake_src),
-            str(SIMULATOR_SRC),
-            env.get("PYTHONPATH", ""),
-        ]
+    (site_packages / "00_sglang_simulator_test_stubs.pth").write_text(
+        "import sglang_simulator_test_stubs\n",
+        encoding="utf-8",
     )
+    return python
+
+
+def _make_subprocess_env(scratch_dir: Path) -> tuple[dict[str, str], Path, Path]:
+    python = _make_venv_with_fake_dependencies(scratch_dir)
+    hook_log = scratch_dir / "hook.log"
+    env = os.environ.copy()
+    env.pop("SGLANG_SIMULATOR_BOOTSTRAP", None)
+    env["PYTHONPATH"] = str(SIMULATOR_SRC)
     env["SGLANG_SIMULATOR_HOOK_LOG"] = str(hook_log)
-    return env, hook_log
+    return env, hook_log, python
 
 
-def _run_python(env: dict[str, str], code: str) -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", textwrap.dedent(code)],
+def _run_python(
+    python: Path, env: dict[str, str], code: str
+) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(python), "-c", textwrap.dedent(code)],
         capture_output=True,
         env=env,
         text=True,
         timeout=30,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_external_harness_marker_activates_before_main(scratch_dir):
-    env, hook_log = _make_subprocess_env(scratch_dir)
-    env["SGLANG_SIMULATOR_AUTO_ACTIVATE"] = "1"
+def test_external_harness_marker_activates_in_virtualenv(scratch_dir):
+    env, hook_log, python = _make_subprocess_env(scratch_dir)
+    env["SGLANG_SIMULATOR_BOOTSTRAP"] = "1"
 
-    _run_python(
+    result = _run_python(
+        python,
         env,
         f"""
-        import os
+        import site
         from pathlib import Path
 
-        assert os.environ["SGLANG_SIMULATOR_BOOTSTRAP"] == "1"
+        assert site.ENABLE_USER_SITE is False
         assert Path({str(hook_log)!r}).read_text().splitlines() == ["installed"]
         """,
     )
 
+    assert result.returncode == 0, result.stdout + result.stderr
+
 
 def test_startup_without_marker_is_unchanged(scratch_dir):
-    env, hook_log = _make_subprocess_env(scratch_dir)
+    env, hook_log, python = _make_subprocess_env(scratch_dir)
 
-    _run_python(
+    result = _run_python(
+        python,
         env,
         f"""
-        import os
         import sys
         from pathlib import Path
 
-        assert "SGLANG_SIMULATOR_BOOTSTRAP" not in os.environ
         assert "sglang_simulator.simulation.sglang.hook_bootstrap" not in sys.modules
         assert not Path({str(hook_log)!r}).exists()
         """,
     )
 
+    assert result.returncode == 0, result.stdout + result.stderr
+
 
 def test_worker_bootstrap_marker_activates_child_interpreter(scratch_dir):
-    env, hook_log = _make_subprocess_env(scratch_dir)
-    env["SGLANG_SIMULATOR_AUTO_ACTIVATE"] = "1"
+    env, hook_log, python = _make_subprocess_env(scratch_dir)
+    env["SGLANG_SIMULATOR_BOOTSTRAP"] = "1"
     child_code = """
     import os
 
-    assert "SGLANG_SIMULATOR_AUTO_ACTIVATE" not in os.environ
     assert os.environ["SGLANG_SIMULATOR_BOOTSTRAP"] == "1"
     """
 
-    _run_python(
+    result = _run_python(
+        python,
         env,
         f"""
         import os
@@ -170,7 +184,6 @@ def test_worker_bootstrap_marker_activates_child_interpreter(scratch_dir):
         import sys
         from pathlib import Path
 
-        os.environ.pop("SGLANG_SIMULATOR_AUTO_ACTIVATE")
         subprocess.run(
             [sys.executable, "-c", {textwrap.dedent(child_code)!r}],
             check=True,
@@ -183,16 +196,20 @@ def test_worker_bootstrap_marker_activates_child_interpreter(scratch_dir):
         """,
     )
 
+    assert result.returncode == 0, result.stdout + result.stderr
 
-def test_usercustomize_and_direct_bootstrap_are_idempotent(scratch_dir):
-    env, hook_log = _make_subprocess_env(scratch_dir)
-    env["SGLANG_SIMULATOR_AUTO_ACTIVATE"] = "1"
 
-    _run_python(
+def test_site_usercustomize_and_direct_bootstrap_are_idempotent(scratch_dir):
+    env, hook_log, python = _make_subprocess_env(scratch_dir)
+    env["SGLANG_SIMULATOR_BOOTSTRAP"] = "1"
+
+    result = _run_python(
+        python,
         env,
         f"""
         from pathlib import Path
 
+        import usercustomize
         from sglang_simulator.simulation.sglang.hook_bootstrap import (
             install_simulator_hooks,
         )
@@ -202,3 +219,44 @@ def test_usercustomize_and_direct_bootstrap_are_idempotent(scratch_dir):
         assert Path({str(hook_log)!r}).read_text().splitlines() == ["installed"]
         """,
     )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_activation_failure_stops_external_harness(scratch_dir):
+    env, _hook_log, python = _make_subprocess_env(scratch_dir)
+    env["SGLANG_SIMULATOR_BOOTSTRAP"] = "1"
+    env["SGLANG_SIMULATOR_TEST_FAIL"] = "1"
+    continued = scratch_dir / "continued"
+
+    result = _run_python(
+        python,
+        env,
+        f"""
+        from pathlib import Path
+
+        Path({str(continued)!r}).write_text("continued", encoding="utf-8")
+        """,
+    )
+
+    assert result.returncode != 0
+    assert not continued.exists()
+    assert "SGLang Simulator activation failed" in result.stderr
+
+
+def test_external_harness_server_args_satisfy_simulator_contract():
+    server_args = SimpleNamespace(
+        tp_size=1,
+        ep_size=1,
+        dp_size=1,
+        pp_size=1,
+        attn_cp_size=1,
+        dcp_size=1,
+        disable_overlap_schedule=True,
+        disable_cuda_graph=True,
+        attention_backend="torch_native",
+        prefill_attention_backend="torch_native",
+        decode_attention_backend="torch_native",
+    )
+
+    validate_simulator_server_args(server_args)

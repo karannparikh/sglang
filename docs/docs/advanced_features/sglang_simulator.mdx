@@ -61,7 +61,7 @@ python3 -m sglang_simulator.simulation.sglang.launch_server \
 An external harness can keep its normal process entry point and opt into the existing simulator hooks. Set the activation marker before Python starts:
 
 ```bash
-export SGLANG_SIMULATOR_AUTO_ACTIVATE=1
+export SGLANG_SIMULATOR_BOOTSTRAP=1
 export SGLANG_SIMULATOR_CONFIG_PATH=tools/sglang-simulator/examples/sim_configs/replay.json
 export SGLANG_USE_CPU_ENGINE=1
 
@@ -70,11 +70,14 @@ python3 -m dynamo.sglang \
   --load-format dummy \
   --device cpu \
   --attention-backend torch_native \
+  --prefill-attention-backend torch_native \
+  --decode-attention-backend torch_native \
   --sampling-backend pytorch \
+  --disable-overlap-schedule \
   --disable-cuda-graph
 ```
 
-The marker installs simulator hooks before the harness imports SGLang and propagates activation to spawned scheduler and detokenizer workers. It does not apply the standalone launcher's defaults, so the harness must still provide its normal SGLang arguments, including dummy loading and CPU options when those are required.
+The marker installs simulator hooks before the harness imports SGLang and propagates activation to spawned scheduler and detokenizer workers. Startup stops if the hooks cannot be installed. The marker does not apply the standalone launcher's defaults, so the harness must still provide the simulator-compatible SGLang arguments shown above.
 
 ## Send a workload
 
