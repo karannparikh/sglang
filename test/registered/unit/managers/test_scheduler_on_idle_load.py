@@ -136,6 +136,7 @@ class TestAsyncShmIdleAccounting(CustomTestCase):
         scheduler.disagg_decode_transfer_queue = None
         scheduler.hisparse_coordinator = None
         scheduler.decode_offload_manager = None
+        scheduler.reverse_kv_manager = None
         scheduler.enable_hierarchical_cache = False
         scheduler.enable_hicache_storage = False
         scheduler.enable_unified_cache_external_linker = False

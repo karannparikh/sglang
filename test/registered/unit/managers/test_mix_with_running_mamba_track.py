@@ -289,6 +289,7 @@ class TestLazyFinishBeforeBoundary(unittest.TestCase):
             request_retirer=SimpleNamespace(
                 release=lambda req, checkpoint: released.append(checkpoint)
             ),
+            reverse_kv_return_manager=None,
         )
         with (
             patch.object(brp, "get_exec", return_value=_settings(lazy=True)),

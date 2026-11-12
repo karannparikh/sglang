@@ -75,6 +75,7 @@ class TestSchedulerFlushCacheAfterRetract(unittest.TestCase):
         scheduler.disagg_decode_transfer_queue = None
         scheduler.hisparse_coordinator = None
         scheduler.decode_offload_manager = None
+        scheduler.reverse_kv_manager = None
         scheduler.deferred_responses = DeferredResponses(
             disaggregation_mode=DisaggregationMode.NULL,
             output_streamer=None,
