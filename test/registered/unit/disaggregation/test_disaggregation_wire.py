@@ -92,7 +92,7 @@ from sglang.srt.speculative.eagle_disaggregation import (
 )
 from sglang.srt.speculative.spec_info import SpeculativeAlgorithm
 from sglang.test.ci.ci_register import register_cpu_ci
-from sglang.test.scheduler_test_utils import FakeReq
+from sglang.test.scheduler_test_utils import FakeReq, leaving_retirer
 from sglang.test.test_utils import CustomTestCase
 
 register_cpu_ci(est_time=23, suite="base-a-test-cpu")
@@ -406,12 +406,7 @@ class TestReverseKVWire(CustomTestCase):
         executor = _ControlledExecutor(future)
         event = Mock()
         event_factory = Mock(return_value=event)
-        retirer = Mock()
-
-        def release(req, *, checkpoint):
-            req.owner_list._leave([req])
-
-        retirer.release.side_effect = release
+        retirer = leaving_retirer()
         manager = ReverseKVReturnManager.__new__(ReverseKVReturnManager)
         manager.page_size = 2
         manager.min_tokens = 1
