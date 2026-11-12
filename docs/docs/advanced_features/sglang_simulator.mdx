@@ -65,7 +65,6 @@ An external harness can keep its normal process entry point and opt into the exi
 ```bash
 export SGLANG_SIMULATOR_BOOTSTRAP=1
 export SGLANG_SIMULATOR_CONFIG_PATH=tools/sglang-simulator/examples/sim_configs/replay.json
-export SGLANG_SIMULATOR_OUTPUT_DIR=/tmp/sglang-simulator-worker-${WORKER_ID:-0}
 export SGLANG_USE_CPU_ENGINE=1
 
 python3 -m dynamo.sglang \
@@ -81,8 +80,6 @@ python3 -m dynamo.sglang \
 ```
 
 The marker installs simulator hooks before the harness imports SGLang and propagates activation to spawned scheduler and detokenizer workers. Startup stops if the hooks cannot be installed. The marker does not apply the standalone launcher's defaults, so the harness must still provide the simulator-compatible SGLang arguments shown above.
-
-Each externally launched SGLang worker must use a distinct `SGLANG_SIMULATOR_OUTPUT_DIR`; profiling replaces `metrics.json`, `iteration.jsonl`, and `request.jsonl` in that directory. Set `WORKER_ID` to the harness's stable worker identity when launching more than one worker.
 
 ## Send a workload
 
