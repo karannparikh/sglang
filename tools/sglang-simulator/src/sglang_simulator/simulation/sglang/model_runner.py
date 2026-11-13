@@ -1,6 +1,12 @@
 import torch
+
 from sglang_simulator.hook import BaseHook
 from sglang_simulator.simulation.manager import ConfigManager
+from sglang_simulator.simulation.sglang.deterministic_sampling import (
+    DeterministicRequestState,
+    build_request_digest,
+    sample_token_id,
+)
 from sglang_simulator.simulation.sglang.utils import (
     resolve_model_info,
     resolve_scheduler_config,
@@ -35,6 +41,99 @@ def _resolve_kv_page_size(configurator):
     )
 
 
+def _model_identity(model_config) -> str:
+    model_path = str(model_config.model_path)
+    revision = str(model_config.revision or "")
+    return f"{len(model_path)}:{model_path}{revision}"
+
+
+def _unsupported_sampling_features(req) -> list[str]:
+    sampling_params = req.sampling_params
+    unsupported = []
+    if req.return_logprob:
+        unsupported.append("output logprobs")
+    if req.return_sampling_mask:
+        unsupported.append("sampling masks")
+    if req.grammar is not None or any(
+        (
+            sampling_params.json_schema,
+            sampling_params.regex,
+            sampling_params.ebnf,
+            sampling_params.structural_tag,
+        )
+    ):
+        unsupported.append("structured output")
+    if req.custom_logit_processor is not None:
+        unsupported.append("custom logit processors")
+    if sampling_params.logit_bias is not None:
+        unsupported.append("logit_bias")
+    if sampling_params.watermark is not None:
+        unsupported.append("watermarking")
+    if sampling_params.beam_width not in (None, 1):
+        unsupported.append("beam search")
+    if sampling_params.min_new_tokens:
+        unsupported.append("min_new_tokens")
+    return unsupported
+
+
+def _excluded_token_ids(req) -> tuple[int, ...]:
+    token_ids = set(req.eos_token_ids or ())
+    token_ids.update(req.sampling_params.stop_token_ids or ())
+    return tuple(sorted(token_ids))
+
+
+def _build_request_state(*, model_identity: str, req) -> DeterministicRequestState:
+    unsupported = _unsupported_sampling_features(req)
+    if unsupported:
+        raise ValueError(
+            "SGLang Simulator deterministic output does not support "
+            + ", ".join(unsupported)
+            + "."
+        )
+
+    sampling_params = req.sampling_params
+    return DeterministicRequestState(
+        request_digest=build_request_digest(
+            model_identity=model_identity,
+            prompt_token_ids=req.origin_input_ids,
+            cache_salt=req.cache_salt,
+            temperature=sampling_params.temperature,
+            top_p=sampling_params.top_p,
+            top_k=sampling_params.top_k,
+            min_p=sampling_params.min_p,
+            frequency_penalty=sampling_params.frequency_penalty,
+            presence_penalty=sampling_params.presence_penalty,
+            repetition_penalty=sampling_params.repetition_penalty,
+            sampling_seed=sampling_params.sampling_seed,
+        ),
+        output_position=len(req.output_ids),
+        excluded_token_ids=_excluded_token_ids(req),
+    )
+
+
+class C_ForwardBatchHook(BaseHook):
+    HOOK_CLASS_NAME = "ForwardBatch"
+    HOOK_MODULE_NAME = "sglang.srt.model_executor.forward_batch_info"
+
+    @classmethod
+    def hook(cls, target):
+        original_init_new = target.init_new
+
+        def wrapped_init_new(cls, batch, model_runner, **kwargs):
+            sampling_states = tuple(
+                _build_request_state(
+                    model_identity=model_runner.simulator_model_identity,
+                    req=req,
+                )
+                for req in batch.reqs
+            )
+            forward_batch = original_init_new(batch, model_runner, **kwargs)
+            forward_batch.simulator_sampling_states = sampling_states
+            return forward_batch
+
+        target.init_new = classmethod(wrapped_init_new)
+
+
 class C_ModelRunnerHook(BaseHook):
     HOOK_CLASS_NAME = "ModelRunner"
     HOOK_MODULE_NAME = "sglang.srt.model_executor.model_runner"
@@ -55,6 +154,7 @@ class C_ModelRunnerHook(BaseHook):
             self.weight_load_mem_usage = 0
             self.load_config = None
             self.loader = _make_mock_model_loader(type(self))
+            self.simulator_model_identity = _model_identity(self.model_config)
 
             if ConfigManager.get_model_info() is None:
                 ConfigManager.set_model_info(resolve_model_info(self.model_config))
@@ -66,7 +166,7 @@ class C_ModelRunnerHook(BaseHook):
 
             output = LogitsProcessorOutput(
                 next_token_logits=torch.empty(
-                    size=(batch.batch_size, self.model_config.vocab_size),
+                    size=(batch.batch_size, 0),
                     device=self.device,
                 )
             )
@@ -76,10 +176,21 @@ class C_ModelRunnerHook(BaseHook):
                 expert_distribution_metrics=None,
             )
 
-        def wrapped_sample(self, *args, **kwargs):
-            logits = args[0]
-            return torch.ones(
-                size=(logits.next_token_logits.shape[0],),
+        def wrapped_sample(self, logits_output, forward_batch):
+            states = forward_batch.simulator_sampling_states
+            if len(states) != forward_batch.batch_size:
+                raise RuntimeError(
+                    "Simulator sampling metadata does not match the forward batch."
+                )
+            token_ids = [
+                sample_token_id(
+                    state=state,
+                    vocab_size=self.model_config.vocab_size,
+                )
+                for state in states
+            ]
+            return torch.tensor(
+                token_ids,
                 device=self.device,
                 dtype=torch.int64,
             )

@@ -17,7 +17,8 @@ The simulator supports:
 - synthetic request rates, ShareGPT workloads, and timestamped Autobench traces;
 - OFFLINE logical-time simulation and BLOCKING wall-clock replay;
 - AISimulate, ML, and replay latency predictors;
-- SGLang prefix caching and [HiCache](/docs/advanced_features/hicache); and
+- SGLang prefix caching and [HiCache](/docs/advanced_features/hicache);
+- deterministic generated token IDs without dense vocabulary logits; and
 - serving-compatible TTFT, TPOT, ITL, throughput, and cache-hit metrics.
 
 ## Install from the SGLang repository
@@ -80,6 +81,12 @@ python3 -m dynamo.sglang \
 ```
 
 The marker installs simulator hooks before the harness imports SGLang and propagates activation to spawned scheduler and detokenizer workers. Startup stops if the hooks cannot be installed. The marker does not apply the standalone launcher's defaults, so the harness must still provide the simulator-compatible SGLang arguments shown above.
+
+### Deterministic generated tokens
+
+The simulator generates token IDs directly at the sampling boundary. It does not allocate a `batch_size x vocab_size` logits tensor. The versioned `sglang-simulator-token-v1` function uses the model path and revision, prompt token IDs, cache salt, output position, and scalar sampling parameters. Request IDs and batch composition do not affect the result, so repeated, cached, and disaggregated executions can produce the same token sequence.
+
+The scalar temperature, top-p, top-k, min-p, penalty, and sampling-seed values perturb the deterministic sequence. They do not model a probability distribution. Features that require real logits are rejected: output logprobs, sampling masks, structured output, custom logit processors, logit bias, watermarking, beam search, and minimum-new-token constraints.
 
 ## Send a workload
 
