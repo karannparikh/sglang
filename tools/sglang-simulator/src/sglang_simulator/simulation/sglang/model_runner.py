@@ -1,5 +1,4 @@
 import torch
-
 from sglang_simulator.hook import BaseHook
 from sglang_simulator.simulation.manager import ConfigManager
 from sglang_simulator.simulation.sglang.deterministic_sampling import (
@@ -242,7 +241,6 @@ class C_KVCacheConfiguratorHook(BaseHook):
     @classmethod
     def hook(cls, target):
         original_configure = target.configure
-        original_init_pools = target._init_pools
         supports_cpu_fp8_quant_method = hasattr(target, "_build_mha_quant_method")
 
         def wrapped_configure(self, *args, **kwargs):
@@ -330,64 +328,5 @@ class C_KVCacheConfiguratorHook(BaseHook):
                 available_bytes = int(rest_memory_gb * (1 << 30))
             return available_bytes
 
-        def wrapped_init_pools(self, *args, **kwargs):
-            # Pool payload is never read during simulation. Preserve the native
-            # pool classes and allocator wiring, but allocate minimal payload
-            # dimensions and restore their logical metadata afterwards.
-            compact_attrs = (
-                "qk_nope_head_dim",
-                "qk_rope_head_dim",
-                "index_head_dim",
-                "kv_lora_rank",
-                "head_dim",
-                "v_head_dim",
-                "linear_value_head_dim",
-                "linear_key_head_dim",
-                "linear_conv_kernel_dim",
-            )
-            original_attrs = {
-                name: getattr(self.model_config, name)
-                for name in compact_attrs
-                if hasattr(self.model_config, name)
-            }
-            try:
-                for name in original_attrs:
-                    setattr(self.model_config, name, 1)
-                pools = original_init_pools(self, *args, **kwargs)
-            finally:
-                for name, value in original_attrs.items():
-                    setattr(self.model_config, name, value)
-
-            token_pool = pools.token_to_kv_pool
-            for name, value in original_attrs.items():
-                if hasattr(token_pool, name):
-                    setattr(token_pool, name, value)
-
-            # Some pools derive their physical row widths while the dimensions
-            # above are compacted. Restore that derived geometry before host
-            # pools inspect the device-pool rows for HiCache sizing.
-            if all(
-                hasattr(token_pool, name)
-                for name in ("head_num", "head_dim", "row_dim")
-            ):
-                token_pool.row_dim = token_pool.head_num * token_pool.head_dim
-            if all(
-                hasattr(token_pool, name)
-                for name in ("head_num", "v_head_dim", "v_row_dim")
-            ):
-                token_pool.v_row_dim = token_pool.head_num * token_pool.v_head_dim
-
-            if (
-                hasattr(token_pool, "kv_cache_dim")
-                and token_pool.kv_cache_dim == 2
-                and "kv_lora_rank" in original_attrs
-                and "qk_rope_head_dim" in original_attrs
-            ):
-                token_pool.kv_cache_dim = (
-                    original_attrs["kv_lora_rank"] + original_attrs["qk_rope_head_dim"]
-                )
-            return pools
-
         target.configure = wrapped_configure
         target._profile_available_bytes = override_profile_available_bytes
-        target._init_pools = wrapped_init_pools

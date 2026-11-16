@@ -309,7 +309,7 @@ class C_HostKVCacheHook(BaseHook):
 
 
 class C_PackedSingleKVPoolHook(BaseHook):
-    """Allocate byte-packed single KV pools from their runtime geometry."""
+    """Keep packed single-pool geometry while replacing its payload with meta storage."""
 
     HOOK_CLASS_NAME = r".*SingleKVPool$"
     HOOK_MODULE_NAME = r"^sglang\.srt\.mem_cache\..+$"
@@ -321,28 +321,33 @@ class C_PackedSingleKVPoolHook(BaseHook):
         original_create_buffer = target.create_buffer
 
         def wrapped_create_buffer(self, *, num_pages: int):
-            if self.store_dtype != torch.uint8 or not hasattr(
-                self, "get_bytes_per_token"
-            ):
-                return original_create_buffer(self, num_pages=num_pages)
-
+            logical_device = self.device
+            self.device = "meta"
             try:
-                return original_create_buffer(self, num_pages=num_pages)
-            except AssertionError:
-                # Some packed pools validate production-only geometry. Simulation
-                # still needs a correctly sized byte buffer for dummy model configs.
-                pass
+                if self.store_dtype != torch.uint8 or not hasattr(
+                    self, "get_bytes_per_token"
+                ):
+                    return original_create_buffer(self, num_pages=num_pages)
 
-            bytes_per_token = self.get_bytes_per_token()
-            self.kv_cache_total_dim = bytes_per_token
-            bytes_per_page = self.page_size * bytes_per_token
-            self.bytes_per_page_padded = (bytes_per_page + 575) // 576 * 576
-            return torch.zeros(
-                num_pages,
-                self.bytes_per_page_padded,
-                dtype=self.store_dtype,
-                device=self.device,
-            )
+                try:
+                    return original_create_buffer(self, num_pages=num_pages)
+                except AssertionError:
+                    # Some packed pools validate production-only geometry. Simulation
+                    # still needs the logical byte-buffer shape for dummy model configs.
+                    pass
+
+                bytes_per_token = self.get_bytes_per_token()
+                self.kv_cache_total_dim = bytes_per_token
+                bytes_per_page = self.page_size * bytes_per_token
+                self.bytes_per_page_padded = (bytes_per_page + 575) // 576 * 576
+                return torch.zeros(
+                    num_pages,
+                    self.bytes_per_page_padded,
+                    dtype=self.store_dtype,
+                    device=self.device,
+                )
+            finally:
+                self.device = logical_device
 
         target.create_buffer = wrapped_create_buffer
 
