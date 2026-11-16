@@ -707,9 +707,13 @@ _register(
 )
 _register(
     ("random_seed",),
-    category=WARN_NO_OP,
-    subsystem="device-runtime",
-    rationale="Deterministic simulator tokens use request sampling state, not the process seed.",
+    category=MODELED,
+    subsystem="compute-predictor",
+    rationale="Sampled simulator profiles seed a process-local rank-specific stream.",
+    consumer_paths=(
+        "tools/sglang-simulator/src/sglang_simulator/simulation/sglang/utils.py",
+        "tools/sglang-simulator/src/sglang_simulator/time_predictor/h200_lab.py",
+    ),
 )
 _register(
     (
@@ -969,6 +973,9 @@ def build_startup_summary(
     predictor_name: str,
     predictor_mode: str,
     simulation_mode: str,
+    profile_name: str | None,
+    random_seed: int | None,
+    logical_rank: int,
     scheduler_config,
     max_total_tokens: int,
     page_size: int,
@@ -978,6 +985,7 @@ def build_startup_summary(
     disaggregation_fixed_latency_ms: float,
     disaggregation_topology: str | None,
     disaggregation_location: str | None,
+    topology_preset: str | None,
     deterministic_sampling_version: str,
 ) -> str:
     if disaggregation_topology is None:
@@ -990,14 +998,19 @@ def build_startup_summary(
         topology = json.loads(disaggregation_topology)
         pd_model = {
             "levels": topology["levels"],
+            "links": topology["links"],
             "location": disaggregation_location,
+            "preset": topology_preset,
             "type": "topology",
         }
     summary = {
         "classification_counts": category_counts(),
         "compute": {
+            "logical_rank": logical_rank,
             "predictor": predictor_name,
             "predictor_mode": predictor_mode,
+            "profile": profile_name,
+            "random_seed": random_seed,
             "simulation_mode": simulation_mode,
         },
         "deterministic_sampling": deterministic_sampling_version,
@@ -1006,6 +1019,11 @@ def build_startup_summary(
             "device_payload": "meta",
             "hicache_ratio": hicache_ratio,
             "host_payload": "meta",
+            "chunked_prefill_size": scheduler_config.chunked_prefill_size,
+            "context_length": scheduler_config.context_length,
+            "kv_cache_dtype": scheduler_config.kv_cache_dtype_name,
+            "max_prefill_tokens": scheduler_config.max_prefill_tokens,
+            "max_running_requests": scheduler_config.max_running_requests,
             "max_total_tokens": max_total_tokens,
             "page_size": page_size,
         },

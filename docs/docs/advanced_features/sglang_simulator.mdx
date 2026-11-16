@@ -104,6 +104,54 @@ subsystem, and implementation consumer for modeled behavior. CI rejects
 unclassified or stale fields, duplicate or invalid entries, and modeled fields
 without a consumer assertion.
 
+### H200 lab reference profile
+
+Use the opt-in `h200-lab-disaggregated-v1` profile when reproducing the
+reference 8-GPU H200 lab setup. It configures 256-token pages, 15,509 pages
+(3,970,304 token slots), a 1,048,576-token context, 32 running requests,
+8,192-token maximum/chunked prefill, FP8 E4M3 KV, and the
+`h200-lab-sampled-v1` prefill/decode predictor. These are lab reference values,
+not universal H200 guarantees.
+
+The ready configs select the profile plus one reusable topology:
+
+```text
+tools/sglang-simulator/examples/sim_configs/h200_lab_two_zones.json
+tools/sglang-simulator/examples/sim_configs/h200_lab_mixed.json
+```
+
+In a Dynamo worker definition, set `SGLANG_SIMULATOR_CONFIG_PATH` to one of
+those files, assign a stable `SGLANG_SIMULATOR_LOGICAL_RANK`, and pass the
+native SGLang role and location:
+
+```yaml
+env:
+  SGLANG_SIMULATOR_BOOTSTRAP: "1"
+  SGLANG_SIMULATOR_CONFIG_PATH: /opt/sglang/tools/sglang-simulator/examples/sim_configs/h200_lab_two_zones.json
+  SGLANG_SIMULATOR_LOGICAL_RANK: "0"
+args:
+  - --disaggregation-mode
+  - prefill
+  - --disaggregation-simulator-location
+  - zone-a/rack-1/node-1
+```
+
+The two-zone preset models node/rack/zone/default links at
+450/50/12.5/1.25 GB/s with 0.01/0.05/0.5/5 ms fixed latency. The mixed preset
+uses node/rack/default at 450/50/12.5 GB/s with 0.01/0.05/0.5 ms latency.
+Dynamo remains responsible for process launch and worker placement.
+
+The profile charges each native scheduler step using recomputed prefill tokens
+or active decode batch size. Sampling is deterministic from `--random-seed`
+and logical rank. It rejects aggregated/non-PD roles, a separate predictor
+section, and an inline topology combined with a named preset.
+
+Explicit ServerArgs override profile defaults. `profile_overrides` in the
+simulator JSON is available when a programmatic harness must explicitly select
+a value equal to SGLang's ordinary default; conflicting values fail startup.
+Existing simulator JSON `scheduler` topology fields keep their established
+higher predictor precedence.
+
 ### Deterministic generated tokens
 
 The simulator generates token IDs directly at the sampling boundary. It does not allocate a `batch_size x vocab_size` logits tensor. The versioned `sglang-simulator-token-v1` function uses the model path and revision, prompt token IDs, cache salt, output position, and scalar sampling parameters. Request IDs and batch composition do not affect the result, so repeated, cached, and disaggregated executions can produce the same token sequence.

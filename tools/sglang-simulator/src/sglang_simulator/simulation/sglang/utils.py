@@ -51,13 +51,19 @@ def resolve_scheduler_config(
     if dtype == "auto":
         model_config = _resolve_model_config(server_args, model_config)
         dtype = str(model_config.dtype).strip("torch.")
+    kv_cache_dtype = get_arg("kv_cache_dtype")
     data_type = DataType.from_torch_dtype(dtype)
     return SchedulerConfig(
         data_type=data_type,
-        kv_cache_data_type=DataType.from_torch_dtype(get_arg("kv_cache_dtype"))
-        or data_type,
+        kv_cache_data_type=DataType.from_torch_dtype(kv_cache_dtype) or data_type,
         mem_fraction_static=get_arg("mem_fraction_static"),
         max_total_tokens=get_arg("max_total_tokens"),
+        context_length=get_arg("context_length"),
+        max_running_requests=get_arg("max_running_requests"),
+        max_prefill_tokens=get_arg("max_prefill_tokens"),
+        chunked_prefill_size=get_arg("chunked_prefill_size"),
+        random_seed=get_arg("random_seed"),
+        kv_cache_dtype_name=kv_cache_dtype,
         tp_size=get_arg("tp_size"),
         ep_size=get_arg("ep_size"),
         dp_size=get_arg("dp_size"),

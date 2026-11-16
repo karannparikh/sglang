@@ -82,6 +82,8 @@ if __name__ == "__main__":
 
     argv = sys.argv[1:]
     raw_args = parser.parse_args(argv)
+    if raw_args.sim_config_path:
+        os.environ["SGLANG_SIMULATOR_CONFIG_PATH"] = raw_args.sim_config_path
     apply_simulator_defaults(raw_args, argv)
     apply_simulator_server_args(
         raw_args,
@@ -93,8 +95,6 @@ if __name__ == "__main__":
     config_path = os.getenv("SGLANG_SIMULATOR_CONFIG_PATH")
     if config_path and os.path.exists(config_path):
         logger.info(f"Using config from {config_path}")
-    elif simulation_args.sim_config_path:
-        os.environ["SGLANG_SIMULATOR_CONFIG_PATH"] = simulation_args.sim_config_path
 
     try:
         launch_server(

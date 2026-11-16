@@ -241,11 +241,19 @@ def test_startup_summary_is_stable_and_bounded(monkeypatch):
         dp_size=2,
         pp_size=2,
         cp_size=1,
+        chunked_prefill_size=8192,
+        context_length=1_048_576,
+        kv_cache_dtype_name="fp8_e4m3",
+        max_prefill_tokens=8192,
+        max_running_requests=32,
     )
     kwargs = {
         "predictor_name": "replay",
         "predictor_mode": "knn",
         "simulation_mode": "OFFLINE",
+        "profile_name": None,
+        "random_seed": 7,
+        "logical_rank": 0,
         "scheduler_config": scheduler_config,
         "max_total_tokens": 1_000_000,
         "page_size": 256,
@@ -255,6 +263,7 @@ def test_startup_summary_is_stable_and_bounded(monkeypatch):
         "disaggregation_fixed_latency_ms": 1.0,
         "disaggregation_topology": None,
         "disaggregation_location": None,
+        "topology_preset": None,
         "deterministic_sampling_version": "sglang-simulator-token-v1",
     }
 
@@ -273,9 +282,14 @@ def test_startup_summary_is_stable_and_bounded(monkeypatch):
         "tp_size": 8,
     }
     assert summary["logical_kv"] == {
+        "chunked_prefill_size": 8192,
+        "context_length": 1_048_576,
         "device_payload": "meta",
         "hicache_ratio": 2.0,
         "host_payload": "meta",
+        "kv_cache_dtype": "fp8_e4m3",
+        "max_prefill_tokens": 8192,
+        "max_running_requests": 32,
         "max_total_tokens": 1_000_000,
         "page_size": 256,
     }

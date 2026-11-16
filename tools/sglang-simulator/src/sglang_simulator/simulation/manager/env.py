@@ -50,3 +50,18 @@ class Envs:
         ).upper()
         assert SGLANG_SIMULATOR_OUTPUT_MODE in ("BLOCKING", "OFFLINE")
         return SGLANG_SIMULATOR_OUTPUT_MODE
+
+    @classmethod
+    def logical_rank(cls) -> int:
+        raw_rank = os.getenv("SGLANG_SIMULATOR_LOGICAL_RANK", "0")
+        try:
+            rank = int(raw_rank)
+        except ValueError as error:
+            raise ValueError(
+                "SGLANG_SIMULATOR_LOGICAL_RANK must be a non-negative integer"
+            ) from error
+        if rank < 0:
+            raise ValueError(
+                "SGLANG_SIMULATOR_LOGICAL_RANK must be a non-negative integer"
+            )
+        return rank

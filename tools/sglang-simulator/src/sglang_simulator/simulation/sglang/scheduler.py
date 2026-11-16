@@ -349,7 +349,12 @@ class C_SchedulerHook(BaseHook):
                 sched_config = ConfigManager.get_scheduler_config()
 
                 C_SchedulerHook.INFERENCE_PREDICTOR = (
-                    ConfigManager.get_inference_time_predictor(model, hw, sched_config)
+                    ConfigManager.get_inference_time_predictor(
+                        model,
+                        hw,
+                        sched_config,
+                        role=self.server_args.disaggregation_mode,
+                    )
                 )
                 C_SchedulerHook.VIRTUAL_KV_CAPACITY_TOKENS = self.max_total_num_tokens
                 C_SchedulerHook.VIRTUAL_KV_PAGE_SIZE = self.page_size
@@ -360,11 +365,17 @@ class C_SchedulerHook(BaseHook):
                     predictor_name, predictor_mode = (
                         ConfigManager.get_predictor_summary()
                     )
+                    profile_name, topology_preset, logical_rank = (
+                        ConfigManager.get_profile_summary()
+                    )
                     logger.info(
                         build_startup_summary(
                             predictor_name=predictor_name,
                             predictor_mode=predictor_mode,
                             simulation_mode=C_SchedulerHook.SIM_MODE.value,
+                            profile_name=profile_name,
+                            random_seed=sched_config.random_seed,
+                            logical_rank=logical_rank,
                             scheduler_config=sched_config,
                             max_total_tokens=self.max_total_num_tokens,
                             page_size=self.page_size,
@@ -384,6 +395,7 @@ class C_SchedulerHook(BaseHook):
                             disaggregation_location=(
                                 disagg.disaggregation_simulator_location
                             ),
+                            topology_preset=topology_preset,
                             deterministic_sampling_version=(
                                 DETERMINISTIC_TOKEN_ALGORITHM
                             ),

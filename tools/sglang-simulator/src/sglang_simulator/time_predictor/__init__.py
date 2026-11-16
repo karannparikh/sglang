@@ -3,6 +3,7 @@ from sglang_simulator.time_predictor.base import (
     ScheduleBatch,
     ScheduleRequest,
 )
+from sglang_simulator.time_predictor.h200_lab import H200LabTimePredictor
 from sglang_simulator.time_predictor.ml import MLTimePredictor
 from sglang_simulator.time_predictor.replay import ReplayTimePredictor
 
@@ -11,6 +12,7 @@ __all__ = (
     "ScheduleBatch",
     "InferTimePredictor",
     "AISimulateTimePredictor",
+    "H200LabTimePredictor",
     "MLTimePredictor",
     "ReplayTimePredictor",
 )
