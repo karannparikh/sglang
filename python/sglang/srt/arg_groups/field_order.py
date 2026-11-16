@@ -572,5 +572,7 @@ POSITIONAL_FIELD_ORDER = (
     "_max_running_requests_explicitly_set",
     "disaggregation_simulator_bandwidth_gb_per_s",
     "disaggregation_simulator_fixed_latency_ms",
+    "disaggregation_simulator_topology",
+    "disaggregation_simulator_location",
 )
 # fmt: on

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,10 @@ from sglang.srt.arg_groups.model_override_base import (
     resolving_view,
 )
 from sglang.srt.arg_groups.overrides import declare_resolution
+from sglang.srt.disaggregation.simulator_topology import (
+    SimulatorTopology,
+    parse_simulator_location,
+)
 from sglang.srt.environ import envs
 from sglang.srt.runtime_context import attn_dp_enabled_of, num_dp_ranks_of
 
@@ -45,14 +50,38 @@ def handle_pd_disaggregation(server_args: ServerArgs) -> None:
         )
 
     if cfg.disaggregation_transfer_backend == "simulator":
-        if cfg.disaggregation_simulator_bandwidth_gb_per_s <= 0:
+        if (
+            not math.isfinite(cfg.disaggregation_simulator_bandwidth_gb_per_s)
+            or cfg.disaggregation_simulator_bandwidth_gb_per_s <= 0
+        ):
             raise ValueError(
-                "--disaggregation-simulator-bandwidth-gb-per-s must be positive"
+                "--disaggregation-simulator-bandwidth-gb-per-s must be finite "
+                "and positive"
             )
-        if cfg.disaggregation_simulator_fixed_latency_ms < 0:
+        if (
+            not math.isfinite(cfg.disaggregation_simulator_fixed_latency_ms)
+            or cfg.disaggregation_simulator_fixed_latency_ms < 0
+        ):
             raise ValueError(
-                "--disaggregation-simulator-fixed-latency-ms must be non-negative"
+                "--disaggregation-simulator-fixed-latency-ms must be finite "
+                "and non-negative"
             )
+        topology = None
+        if cfg.disaggregation_simulator_topology is not None:
+            topology = SimulatorTopology.from_json(
+                cfg.disaggregation_simulator_topology
+            )
+            canonical_topology = topology.to_json()
+            if canonical_topology != cfg.disaggregation_simulator_topology:
+                declare_resolution(
+                    server_args,
+                    "handle_pd_disaggregation",
+                    disaggregation_simulator_topology=canonical_topology,
+                )
+        if cfg.disaggregation_simulator_location is not None:
+            location = parse_simulator_location(cfg.disaggregation_simulator_location)
+            if topology is not None:
+                topology.validate_location(location)
 
     if cfg.disaggregation_decode_allocation_policy == "prefill_complete":
         _validate_prefill_complete(server_args)
