@@ -83,6 +83,8 @@ def installed_simulator(simulator_wheel, tmp_path_factory) -> tuple[Path, Path, 
     )
     original_sitecustomize = sitecustomize.read_bytes()
 
+    install_env = os.environ.copy()
+    install_env.pop("PYTHONPATH", None)
     result = subprocess.run(
         [
             str(python),
@@ -94,6 +96,7 @@ def installed_simulator(simulator_wheel, tmp_path_factory) -> tuple[Path, Path, 
         ],
         capture_output=True,
         check=False,
+        env=install_env,
         text=True,
         timeout=120,
     )
@@ -131,9 +134,11 @@ def installed_simulator(simulator_wheel, tmp_path_factory) -> tuple[Path, Path, 
             "cache_controller",
             "hicache_storage",
             "mem_cache_allocator",
+            "mem_pool_device",
             "mem_pool_host",
             "model_runner",
             "scheduler",
+            "server_args",
             "unified_radix_cache",
         )
         for module_name in hook_modules:
@@ -384,6 +389,8 @@ def test_activation_failure_stops_external_harness(scratch_dir, installed_simula
 
 def test_external_harness_server_args_satisfy_simulator_contract():
     server_args = SimpleNamespace(
+        device="cpu",
+        load_format="dummy",
         tp_size=1,
         ep_size=1,
         dp_size=1,
@@ -395,6 +402,7 @@ def test_external_harness_server_args_satisfy_simulator_contract():
         attention_backend="torch_native",
         prefill_attention_backend="torch_native",
         decode_attention_backend="torch_native",
+        sampling_backend="pytorch",
         disaggregation_transfer_backend="simulator",
     )
 

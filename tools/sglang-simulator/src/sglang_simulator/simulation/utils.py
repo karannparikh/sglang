@@ -74,15 +74,25 @@ def calc_input_token_metrics(
 
 
 def calc_iteration_metrics(
-    iteration_stats: list[dict], request_metrics: dict | None = None
+    iteration_stats: list[dict],
+    request_metrics: dict | None = None,
+    *,
+    virtual_kv_capacity_tokens: int | None = None,
+    virtual_kv_page_size: int | None = None,
 ) -> dict:
     """Aggregate per-iteration simulator latency into result metrics."""
     iterations = len(iteration_stats)
+    predicted_compute_s = sum(
+        float(item.get("predicted_compute_latency", 0) or 0) for item in iteration_stats
+    )
     forward_s = sum(
         float(item.get("forward_latency", 0) or 0) for item in iteration_stats
     )
     l2_load_s = sum(
         float(item.get("l2_load_latency", 0) or 0) for item in iteration_stats
+    )
+    logical_transfer_bytes = sum(
+        float(item.get("h2d_load_bytes", 0) or 0) for item in iteration_stats
     )
     cpu_s = sum(float(item.get("cpu_overhead", 0) or 0) for item in iteration_stats)
     total_s = forward_s + l2_load_s + cpu_s
@@ -90,6 +100,11 @@ def calc_iteration_metrics(
     metrics = {
         "iterations": iterations,
         "avg_iter_latency_ms": avg_iter_latency_ms,
+        "simulator_predicted_compute_time_s": predicted_compute_s,
+        "simulator_logical_transfer_bytes": logical_transfer_bytes,
+        "simulator_logical_transfer_time_s": l2_load_s,
+        "simulator_virtual_kv_capacity_tokens": virtual_kv_capacity_tokens,
+        "simulator_virtual_kv_page_size": virtual_kv_page_size,
     }
 
     if request_metrics:

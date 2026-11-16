@@ -185,19 +185,57 @@ table and output file. If the benchmark points at another directory, it may show
 unrelated stale metrics or client wall-clock values. Use the same fresh path in
 both terminals for every run.
 
-The simulator always runs the SGLang runtime with `tp_size=ep_size=dp_size=pp_size=1`
-and both attention/decode context-parallel sizes set to `1`. Parallel CLI options
-accepted by SGLang are therefore ignored by this simulator entry point. This keeps
-simulator-only CPU work single-process; it does not change the modeled deployment.
-Set the real deployment topology under `scheduler` in `--sim-config-path`. That
-topology drives predictor and cache-resource modeling without launching physical
-parallel workers.
+The simulator always runs the physical SGLang runtime with
+`tp_size=ep_size=dp_size=pp_size=1` and both attention/decode
+context-parallel sizes set to `1`. Requested `--tp-size`, `--ep-size`,
+`--dp-size`, `--pp-size`, and `--attn-cp-size` values are preserved as the
+logical deployment topology used by the predictor. Values in the simulator
+JSON `scheduler` section take precedence over those CLI values. Decode-only
+`--dcp-size` is rejected when it is not `1` because no predictor model consumes
+it; the simulator never silently collapses an unmodeled parallelism request.
 
 Other server options are normal SGLang command-line arguments. For direct Python
 integration, see
 [`test_simulation_sglang_runner.py`](test/test_simulation_sglang_runner.py); for the
 process/HTTP path, see
 [`test_simulation_sglang_serving.py`](test/test_simulation_sglang_serving.py).
+
+### Hardware option policy
+
+Every hardware-sensitive field in the maintained ServerArgs inventory has one
+explicit simulator classification:
+
+| Classification | Behavior |
+|---|---|
+| `executed` | Native scheduler or control-plane semantics run normally. |
+| `modeled` | A named simulator subsystem consumes the value, such as the compute predictor, logical KV pools, deterministic sampling, PD transport, or topology model. |
+| `warn-no-op` | A non-default or explicitly supplied value is accepted with one field-specific startup warning because no meaningful simulator behavior exists yet. Untouched defaults do not warn. |
+| `rejected` | A non-default request fails before worker startup with the argument name and reason because accepting it would imply unavailable physical execution. |
+
+The registry is in
+[`hardware_policy.py`](src/sglang_simulator/hardware_policy.py). Its deterministic
+inclusion rule is the complete `Device`, `Disagg`, `ExecKernel`, `ExecMamba`,
+`ExecGraph`, `ExecComm`, `ExecMoe`, `ExecOverlap`, `ExecOffload`,
+`ExecDeterministic`, `Memory`, `Model`, `Parallel`, `Schedule`, and `Spec`
+ServerArgs field groups, plus the named precision and memory-saver fields from
+`ExecFeatures`. A drift test fails for missing or stale entries, duplicate or
+invalid classifications, and modeled fields without a source-level consumer
+assertion. When adding a field to one of these groups, add exactly one registry
+entry with a concise rationale, subsystem, and implementation consumer when
+the category is `modeled`.
+
+Simulator activation classifies arguments before ServerArgs resolution and
+forces only the physical single-process substrate (`cpu`, dummy loading,
+torch-native attention, PyTorch sampling, no CUDA graph, and simulator PD
+transport). This applies to the standalone launcher, direct benchmark runner,
+and early-startup external harness bridge.
+
+Startup emits one stable JSON summary prefixed with
+`SGLang Simulator effective configuration:`. It reports the predictor and
+mode, deterministic-token version, logical KV capacity and page geometry,
+logical topology, selected PD link or topology model, classification counts,
+explicit warn-no-op outcomes, and forced physical runtime. It intentionally
+does not dump all ServerArgs or secret-bearing values.
 
 ### KV memory model
 
@@ -207,6 +245,13 @@ MLA, packed single-pool, and host K/V payload tensors retain their logical
 shapes but use metadata-only storage, so modeled cache bytes are not physically
 allocated. Increasing `max_total_tokens` still increases allocator page
 bookkeeping; it does not allocate the corresponding K/V values.
+
+Aggregate `metrics.json` output also includes bounded simulator observability:
+`simulator_predicted_compute_time_s`, `simulator_logical_transfer_bytes`,
+`simulator_logical_transfer_time_s`,
+`simulator_virtual_kv_capacity_tokens`, and
+`simulator_virtual_kv_page_size`. Native scheduler, KV-cache, and FPM metrics
+remain unchanged.
 
 ### PD transfer model
 
@@ -360,10 +405,17 @@ python3 -m pytest -q tools/sglang-simulator/test/test_simulation_sglang_serving.
 python3 -m pytest -q tools/sglang-simulator/test/test_simulation_cache_hit_ratio.py
 python3 -m pytest -q tools/sglang-simulator/test/test_simulation_offline_blocking.py
 python3 -m pytest -q tools/sglang-simulator/test/test_aisimulate_predictor.py
+python3 -m pytest -q tools/sglang-simulator/test/test_hardware_policy.py
+python3 -m pytest -q tools/sglang-simulator/test/test_memory_hardening.py
 ```
 
 Run each file as a separate pytest command because the runner test installs
 process-global simulator hooks and state.
+
+The Linux memory gates require a 10x logical KV-capacity change and a 100x
+logical transfer-size change to add less than 10 MiB RSS, require repeated
+request/abort/timeout rounds to remain within a 16 MiB steady-state RSS band,
+and audit startup for model-weight file opens.
 
 Run repository checks before submitting:
 

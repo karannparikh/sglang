@@ -7,6 +7,7 @@ from dataclasses import asdict
 from typing import Any
 
 from sglang_simulator.compat import validate_simulator_server_args
+from sglang_simulator.hardware_policy import build_startup_summary
 from sglang_simulator.hook import (
     BaseHook,
     is_class_hook_matched,
@@ -14,6 +15,9 @@ from sglang_simulator.hook import (
 )
 from sglang_simulator.hook.utils import get_obj_from_args
 from sglang_simulator.simulation.manager import ConfigManager, Envs, StateManager
+from sglang_simulator.simulation.sglang.deterministic_sampling import (
+    DETERMINISTIC_TOKEN_ALGORITHM,
+)
 from sglang_simulator.simulation.sglang.req_stats_manager import request_stats_manager
 from sglang_simulator.simulation.sglang.utils import (
     resolve_model_info,
@@ -278,6 +282,10 @@ class C_SchedulerHook(BaseHook):
     ITERATION_STATS: list[dict] = []
     TOTAL_PREDICTOR_TIME_COST = 0
     GET_NEW_BATCH_PREFILL_TIME_COST = 0
+    CURRENT_PREDICTED_LATENCY = 0.0
+    SUMMARY_LOGGED = False
+    VIRTUAL_KV_CAPACITY_TOKENS = None
+    VIRTUAL_KV_PAGE_SIZE = None
 
     SIMULATION_BATCH: SimulationScheduleBatch = None
     OVERLAP_SCHEDULE: bool = False
@@ -343,6 +351,45 @@ class C_SchedulerHook(BaseHook):
                 C_SchedulerHook.INFERENCE_PREDICTOR = (
                     ConfigManager.get_inference_time_predictor(model, hw, sched_config)
                 )
+                C_SchedulerHook.VIRTUAL_KV_CAPACITY_TOKENS = self.max_total_num_tokens
+                C_SchedulerHook.VIRTUAL_KV_PAGE_SIZE = self.page_size
+                if not C_SchedulerHook.SUMMARY_LOGGED:
+                    from sglang.srt.runtime_context import get_disagg
+
+                    disagg = get_disagg()
+                    predictor_name, predictor_mode = (
+                        ConfigManager.get_predictor_summary()
+                    )
+                    logger.info(
+                        build_startup_summary(
+                            predictor_name=predictor_name,
+                            predictor_mode=predictor_mode,
+                            simulation_mode=C_SchedulerHook.SIM_MODE.value,
+                            scheduler_config=sched_config,
+                            max_total_tokens=self.max_total_num_tokens,
+                            page_size=self.page_size,
+                            hicache_ratio=sched_config.hicache_ratio,
+                            disaggregation_backend=(
+                                disagg.disaggregation_transfer_backend
+                            ),
+                            disaggregation_bandwidth_gb_per_s=(
+                                disagg.disaggregation_simulator_bandwidth_gb_per_s
+                            ),
+                            disaggregation_fixed_latency_ms=(
+                                disagg.disaggregation_simulator_fixed_latency_ms
+                            ),
+                            disaggregation_topology=(
+                                disagg.disaggregation_simulator_topology
+                            ),
+                            disaggregation_location=(
+                                disagg.disaggregation_simulator_location
+                            ),
+                            deterministic_sampling_version=(
+                                DETERMINISTIC_TOKEN_ALGORITHM
+                            ),
+                        )
+                    )
+                    C_SchedulerHook.SUMMARY_LOGGED = True
             except Exception as e:
                 logger.error(
                     f"Failed to initialize inference time predictor. Error: {e}"
@@ -423,6 +470,7 @@ class C_SchedulerHook(BaseHook):
 
             if ret.__class__.__name__ == "GenerationBatchResult":
                 simulation_batch = SimulationScheduleBatch(reqs=[])
+                C_SchedulerHook.CURRENT_PREDICTED_LATENCY = 0.0
                 if batch.forward_mode.is_extend():
                     for req in batch.reqs:
                         extend_length = getattr(req, "extend_input_len", None)
@@ -456,6 +504,7 @@ class C_SchedulerHook(BaseHook):
                         time.perf_counter() - pred_start
                     )
                     predicted_latency = float(predicted_latency)
+                    C_SchedulerHook.CURRENT_PREDICTED_LATENCY = predicted_latency
 
                     forward_latency = 0
                     if C_SchedulerHook.SIM_MODE == SimulationMode.BLOCKING:
@@ -527,6 +576,9 @@ class C_SchedulerHook(BaseHook):
                 C_SchedulerHook.ITERATION_STATS.append(
                     {
                         "requests": C_SchedulerHook.SIMULATION_BATCH.request_info(),
+                        "predicted_compute_latency": (
+                            C_SchedulerHook.CURRENT_PREDICTED_LATENCY
+                        ),
                         "forward_latency": current_inference_dur,
                         "l2_load_latency": hicache_l2_load_dur,
                         "l2_blocking_wall_latency": blocked_l2_wall_dur,
@@ -576,7 +628,14 @@ class C_SchedulerHook(BaseHook):
                     C_SchedulerHook.TOTAL_PREDICTOR_TIME_COST
                 )
                 metrics.update(
-                    calc_iteration_metrics(C_SchedulerHook.ITERATION_STATS, metrics)
+                    calc_iteration_metrics(
+                        C_SchedulerHook.ITERATION_STATS,
+                        metrics,
+                        virtual_kv_capacity_tokens=(
+                            C_SchedulerHook.VIRTUAL_KV_CAPACITY_TOKENS
+                        ),
+                        virtual_kv_page_size=C_SchedulerHook.VIRTUAL_KV_PAGE_SIZE,
+                    )
                 )
                 metrics.update(C_SchedulerHook.INFERENCE_PREDICTOR.get_metrics())
 

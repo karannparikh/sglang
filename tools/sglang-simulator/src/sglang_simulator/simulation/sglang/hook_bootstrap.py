@@ -14,6 +14,7 @@ from sglang_simulator.simulation.sglang import (
     mem_pool_host,
     model_runner,
     scheduler,
+    server_args,
     sgl_kernel_hook,
     unified_radix_cache,
 )
@@ -38,6 +39,7 @@ def install_simulator_hooks() -> None:
 
     sglang_simulator_hook.install_class_hooks(
         [
+            server_args.C_ServerArgsHook,
             scheduler.C_SchedulerHook,
             scheduler.C_SglangPrefillAdderHook,
             scheduler.C_SchedulerRequestReceiver,
