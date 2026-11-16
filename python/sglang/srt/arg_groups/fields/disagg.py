@@ -69,6 +69,16 @@ class Disagg(msgspec.Struct):
             choices=DISAGG_TRANSFER_BACKEND_CHOICES,
         ),
     ] = "mooncake"
+    disaggregation_simulator_bandwidth_gb_per_s: A[
+        float,
+        "Logical bandwidth in decimal GB/s for the simulator PD transfer backend. "
+        "Default is 64.",
+    ] = 64.0
+    disaggregation_simulator_fixed_latency_ms: A[
+        float,
+        "Fixed per-chunk latency in milliseconds for the simulator PD transfer "
+        "backend. Default is 1.",
+    ] = 1.0
     disaggregation_enable_kv_checksum: A[
         bool,
         "Compute an Adler-32 checksum over each request's KV pages on prefill "

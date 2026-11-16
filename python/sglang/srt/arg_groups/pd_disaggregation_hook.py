@@ -44,6 +44,16 @@ def handle_pd_disaggregation(server_args: ServerArgs) -> None:
             "with MC_FORCE_TCP=1 (TCP transport, no RDMA)"
         )
 
+    if cfg.disaggregation_transfer_backend == "simulator":
+        if cfg.disaggregation_simulator_bandwidth_gb_per_s <= 0:
+            raise ValueError(
+                "--disaggregation-simulator-bandwidth-gb-per-s must be positive"
+            )
+        if cfg.disaggregation_simulator_fixed_latency_ms < 0:
+            raise ValueError(
+                "--disaggregation-simulator-fixed-latency-ms must be non-negative"
+            )
+
     if cfg.disaggregation_decode_allocation_policy == "prefill_complete":
         _validate_prefill_complete(server_args)
         if (
@@ -80,18 +90,18 @@ def handle_pd_disaggregation(server_args: ServerArgs) -> None:
         )
 
     if cfg.disaggregation_mode == "decode" and cfg.dcp_size > 1:
-        # Fake transfer moves no KV and is only used for synthetic decode
-        # benchmarks, so it does not need the DCP relayout from Mooncake/NIXL.
+        # Metadata-only backends do not need a physical DCP relayout.
         if cfg.disaggregation_transfer_backend not in (
             "mooncake",
             "nixl",
             "mori",
             "ascend",
             "fake",
+            "simulator",
         ):
             raise ValueError(
                 "PD decode DCP requires --disaggregation-transfer-backend "
-                "mooncake, nixl, mori, ascend, or fake for synthetic benchmarking, got "
+                "mooncake, nixl, mori, ascend, fake, or simulator, got "
                 f"{cfg.disaggregation_transfer_backend!r}."
             )
 

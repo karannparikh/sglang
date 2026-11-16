@@ -570,5 +570,7 @@ POSITIONAL_FIELD_ORDER = (
     "layernorm_sp_min_tokens",
     "paged_experts_host_memory_gb",
     "_max_running_requests_explicitly_set",
+    "disaggregation_simulator_bandwidth_gb_per_s",
+    "disaggregation_simulator_fixed_latency_ms",
 )
 # fmt: on
