@@ -295,6 +295,79 @@ settings. The harness remains responsible for launching and placing workers.
 The simulator does not model shared-link contention, routing, failures,
 retransmission, or response-KV return.
 
+### H200 lab reference profiles
+
+The opt-in `h200-lab-disaggregated-v1` profile reproduces the capacity and
+sampled engine-latency inputs from one internal 8-GPU H200 lab setup. It is a
+reference profile, not a claim about every H200 deployment.
+
+| Setting | Profile value |
+| --- | --- |
+| Logical TP width | 8 |
+| KV page size | 256 tokens |
+| KV capacity | 15,509 pages / 3,970,304 tokens |
+| Context length | 1,048,576 |
+| Maximum running requests | 32 |
+| Maximum/chunked prefill | 8,192 tokens |
+| KV dtype | FP8 E4M3 |
+| Default timing seed | 0 |
+
+The profile owns the `h200-lab-sampled-v1` predictor. Prefill samples are
+conditioned on the actual recomputed tokens in each native scheduler step;
+decode samples are conditioned on the active decode batch size. Workload
+quantiles are interpolated between measured anchors and clamp above the final
+anchor. Sub-8K prefill work is prorated around a fixed 4 ms overhead, while a
+zero-token cache hit costs zero compute time.
+
+Use one of the ready simulator configs:
+
+```text
+tools/sglang-simulator/examples/sim_configs/h200_lab_two_zones.json
+tools/sglang-simulator/examples/sim_configs/h200_lab_mixed.json
+```
+
+They select the same capacity/timing profile and one of two named link presets:
+
+| Preset | Levels and links |
+| --- | --- |
+| `h200-lab-two-zones-v1` | node 450 GB/s + 0.01 ms; rack 50 GB/s + 0.05 ms; zone 12.5 GB/s + 0.5 ms; default/inter-zone 1.25 GB/s + 5 ms |
+| `h200-lab-mixed-v1` | node 450 GB/s + 0.01 ms; rack 50 GB/s + 0.05 ms; default 12.5 GB/s + 0.5 ms |
+
+A Dynamo harness selects the config in each worker environment and still owns
+worker launch and placement:
+
+```yaml
+env:
+  SGLANG_SIMULATOR_BOOTSTRAP: "1"
+  SGLANG_SIMULATOR_CONFIG_PATH: /opt/sglang/tools/sglang-simulator/examples/sim_configs/h200_lab_two_zones.json
+  SGLANG_SIMULATOR_LOGICAL_RANK: "0"
+args:
+  - --disaggregation-mode
+  - prefill
+  - --disaggregation-simulator-location
+  - zone-a/rack-1/node-1
+```
+
+Use a distinct stable non-negative `SGLANG_SIMULATOR_LOGICAL_RANK` for every
+logical worker. The profile combines it with `--random-seed` in a process-local
+random stream, so reruns are reproducible and ranks do not draw the same
+sequence. Decode workers use the same config with
+`--disaggregation-mode decode` and their own location and logical rank. For the
+mixed preset, locations have two components such as `rack-1/node-2`.
+
+Profile values are defaults. Explicit CLI/runtime ServerArgs values override
+them. `profile_overrides` in the simulator JSON handles external harnesses that
+must explicitly restore a value equal to the ordinary SGLang default; a
+different CLI/runtime value for the same field is rejected as ambiguous.
+Existing simulator JSON `scheduler` topology values retain their higher
+predictor precedence. A profile cannot be combined with a separate `predictor`
+section, and a topology preset cannot be combined with an explicit inline
+topology.
+
+The sampled data applies only to disaggregated `prefill` and `decode` workers.
+Selecting this profile for an aggregated/non-PD worker fails at startup rather
+than presenting the measurements as aggregated-worker timing.
+
 ## Simulation modes
 
 | Mode | Behavior |

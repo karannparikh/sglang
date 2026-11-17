@@ -271,6 +271,7 @@ def build_rust_frame_metadata_fixture() -> dict:
                 spec_algorithm=SpeculativeAlgorithm.NONE,
                 disaggregation_mode=DisaggregationMode.NULL,
                 skip_tokenizer_init=False,
+                skip_detokenizer_init=False,
                 enable_hicache_storage=lambda: storage_attached,
             )
         reqs = {
@@ -399,6 +400,7 @@ def build_rust_frame_metadata_fixture() -> dict:
                 spec_algorithm=SpeculativeAlgorithm.EAGLE,
                 disaggregation_mode=DisaggregationMode.NULL,
                 skip_tokenizer_init=False,
+                skip_detokenizer_init=False,
                 enable_hicache_storage=lambda: False,
                 rust_server=rust_server,
             )

@@ -1169,6 +1169,22 @@ class Engine(EngineScoreMixin, EngineBase):
 
         return processes, names
 
+    @classmethod
+    def _launch_detokenizer_subprocesses_if_enabled(
+        cls,
+        *,
+        server_args: ServerArgs,
+        port_args: PortArgs,
+        run_detokenizer_process_func: Callable,
+    ) -> Tuple[List[mp.Process], List[str]]:
+        if server_args.skip_detokenizer_init:
+            return [], []
+        return cls._launch_detokenizer_subprocesses(
+            server_args=server_args,
+            port_args=port_args,
+            run_detokenizer_process_func=run_detokenizer_process_func,
+        )
+
     @staticmethod
     def _set_startup_time(
         set_startup_time: Callable[[Dict[str, Any]], None],
@@ -1415,7 +1431,7 @@ class Engine(EngineScoreMixin, EngineBase):
 
         # Launch detokenizer process(es) — optionally fronted by a router when
         # detokenizer_worker_num > 1.
-        detoken_procs, detoken_names = cls._launch_detokenizer_subprocesses(
+        detoken_procs, detoken_names = cls._launch_detokenizer_subprocesses_if_enabled(
             server_args=server_args,
             port_args=port_args,
             run_detokenizer_process_func=run_detokenizer_process_func,

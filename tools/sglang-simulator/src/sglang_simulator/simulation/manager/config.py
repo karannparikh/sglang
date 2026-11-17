@@ -2,6 +2,10 @@ import json
 from pathlib import Path
 from typing import Optional
 
+from sglang_simulator.profiles import (
+    get_selected_profile,
+    get_selected_topology_preset,
+)
 from sglang_simulator.simulation.manager.env import Envs
 from sglang_simulator.simulation.types import PlatformConfig, SchedulerConfig
 from sglang_simulator.simulation.utils import (
@@ -184,6 +188,9 @@ class ConfigManager:
 
     @classmethod
     def get_predictor_summary(cls) -> tuple[str, str]:
+        profile = get_selected_profile(cls._get_raw_config())
+        if profile is not None:
+            return profile.predictor_name, profile.name
         predictor = cls._get_raw_config().get("predictor", {})
         name = predictor.get("name", "unknown")
         mode = predictor.get(
@@ -191,6 +198,17 @@ class ConfigManager:
             predictor.get("miss_strategy", "default"),
         )
         return str(name), str(mode)
+
+    @classmethod
+    def get_profile_summary(cls) -> tuple[str | None, str | None, int]:
+        config = cls._get_raw_config()
+        profile = get_selected_profile(config)
+        topology = get_selected_topology_preset(config)
+        return (
+            profile.name if profile is not None else None,
+            topology.name if topology is not None else None,
+            Envs.logical_rank(),
+        )
 
     @classmethod
     def _parse_server_args(cls, server_args: dict, backend: str) -> SchedulerConfig:
@@ -210,9 +228,30 @@ class ConfigManager:
 
     @classmethod
     def get_inference_time_predictor(
-        cls, model: ModelInfo, hw: AcceleratorInfo, sched_config: SchedulerConfig
+        cls,
+        model: ModelInfo,
+        hw: AcceleratorInfo,
+        sched_config: SchedulerConfig,
+        *,
+        role: str = "null",
     ) -> InferTimePredictor:
         config = cls._get_raw_config()
+        profile = get_selected_profile(config)
+        if profile is not None:
+            from sglang_simulator.time_predictor.h200_lab import H200LabTimePredictor
+
+            if sched_config.random_seed is None:
+                raise ValueError(
+                    f"Simulator profile {profile.name!r} requires an integer random seed"
+                )
+            return H200LabTimePredictor(
+                model,
+                hw=hw,
+                config=sched_config,
+                role=role,
+                seed=sched_config.random_seed,
+                logical_rank=Envs.logical_rank(),
+            )
         predictor_config = config.get("predictor", {})
         if predictor_config.get("name") == "aisimulate":
             from sglang_simulator.time_predictor.aisimulate import (

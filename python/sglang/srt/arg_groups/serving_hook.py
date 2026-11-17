@@ -779,7 +779,7 @@ def handle_tokenizer_batching(server_args: Any):
     if cfg.skip_tokenizer_init and not envs.SGLANG_RUST_SERVER.get():
         # Tokenizer workers still serve HTTP / state / output work, so
         # their fanout is preserved; detokenizer workers only decode.
-        if cfg.detokenizer_worker_num != 1:
+        if not cfg.skip_detokenizer_init and cfg.detokenizer_worker_num != 1:
             logger.warning(
                 "skip_tokenizer_init=True leaves no decode work for detokenizer workers; "
                 f"forcing detokenizer_worker_num=1 (requested {cfg.detokenizer_worker_num})."

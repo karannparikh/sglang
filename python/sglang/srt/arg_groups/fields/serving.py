@@ -55,6 +55,11 @@ class Serving(msgspec.Struct):
         int,
         "The worker num of the detokenizer manager.",
     ] = 1
+    skip_detokenizer_init: A[
+        bool,
+        "If set, skip the detokenizer process and return generated token IDs "
+        "without decoding them to text.",
+    ] = False
     skip_tokenizer_init: A[
         bool, "If set, skip init tokenizer and pass input_ids in generate request."
     ] = False

@@ -20,6 +20,12 @@ class SchedulerConfig:
     comm_quant_mode_override: Optional[str] = None
     mem_fraction_static: Optional[float] = None
     max_total_tokens: Optional[int] = None
+    context_length: Optional[int] = None
+    max_running_requests: Optional[int] = None
+    max_prefill_tokens: Optional[int] = None
+    chunked_prefill_size: Optional[int] = None
+    random_seed: Optional[int] = None
+    kv_cache_dtype_name: Optional[str] = None
 
     tp_size: int = 1
     ep_size: int = 1

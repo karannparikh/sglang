@@ -347,6 +347,7 @@ class TestOutputStreamerCustomizedInfo(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
         )
 
@@ -380,6 +381,7 @@ class TestOutputStreamerCustomizedInfo(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
         )
         quiet = _FakeReq("quiet", [10, 11])
@@ -418,6 +420,7 @@ class TestOutputStreamerCustomizedInfo(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
         )
         terminal = _FakeReq("terminal", [20], finished=True)
@@ -459,6 +462,7 @@ class TestOutputStreamerCustomizedInfo(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
         )
         first = _FakeReq("duplicate", [10], finished=True)
@@ -484,6 +488,7 @@ class TestOutputStreamerCustomizedInfo(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
         )
 
@@ -510,6 +515,7 @@ class TestOutputStreamerCustomizedInfo(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
         )
 
@@ -532,6 +538,7 @@ class TestOutputStreamerCustomizedInfo(unittest.TestCase):
                 spec_algorithm=SpeculativeAlgorithm.NONE,
                 disaggregation_mode=DisaggregationMode.NULL,
                 skip_tokenizer_init=False,
+                skip_detokenizer_init=False,
                 enable_hicache_storage=lambda: False,
                 rust_server=object(),
             )
@@ -600,6 +607,7 @@ class TestOutputStreamerDecodeLatency(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
             rust_server=rust_server,
         )
@@ -640,6 +648,7 @@ def _streamer(outputs, enable_hicache_storage=lambda: False, is_generation=True)
         spec_algorithm=SpeculativeAlgorithm.NONE,
         disaggregation_mode=DisaggregationMode.NULL,
         skip_tokenizer_init=False,
+        skip_detokenizer_init=False,
         enable_hicache_storage=enable_hicache_storage,
     )
 
@@ -802,6 +811,7 @@ class TestOutputStreamerCachedTokensSplit(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=disaggregation_mode,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: storage_backend is not None,
             rust_server=rust_server,
         )
@@ -873,6 +883,7 @@ class TestOutputStreamerRustRequestStats(unittest.TestCase):
             ),
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=False,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
             rust_server=rust_server,
         )
@@ -1205,6 +1216,7 @@ class TestOutputStreamerDetokenizeHeader(unittest.TestCase):
             spec_algorithm=SpeculativeAlgorithm.NONE,
             disaggregation_mode=DisaggregationMode.NULL,
             skip_tokenizer_init=True,
+            skip_detokenizer_init=False,
             enable_hicache_storage=lambda: False,
         )
         req = self._req()
@@ -1215,6 +1227,26 @@ class TestOutputStreamerDetokenizeHeader(unittest.TestCase):
             self.assertIsNone(outputs[-1].detokenize_headers)
         streamer.release_detokenize_state(req)
         self.assertEqual(len(outputs), 2)
+
+    def test_skip_detokenizer_init_rows_carry_ipc_and_no_header(self):
+        outputs = []
+        streamer = SchedulerOutputStreamer(
+            send_to_detokenizer=SimpleNamespace(send_output=outputs.append),
+            tree_cache=None,
+            server_args=SimpleNamespace(enable_lmcache=False),
+            is_generation=True,
+            spec_algorithm=SpeculativeAlgorithm.NONE,
+            disaggregation_mode=DisaggregationMode.NULL,
+            skip_tokenizer_init=False,
+            skip_detokenizer_init=True,
+            enable_hicache_storage=lambda: False,
+        )
+        req = self._req()
+        req.output_ids.append(7)
+        streamer.stream_output([req], False)
+
+        self.assertEqual(outputs[-1].http_worker_ipcs, ["worker-a"])
+        self.assertIsNone(outputs[-1].detokenize_headers)
 
     def test_skip_tokenizer_init_idle_batch_carries_an_empty_ipc_list(self):
         """The tokenizer-side router iterates http_worker_ipcs on every batch;

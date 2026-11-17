@@ -97,6 +97,8 @@ _TORCH_DTYPE_TO_DATA_TYPE.update(
         "fp8": DataType.FP8,
         "int8": DataType.INT8,
         "float8": DataType.FP8,
+        "fp8_e4m3": DataType.FP8,
+        "fp8_e5m2": DataType.FP8,
         "float16": DataType.FP16,
         "float32": DataType.FP32,
         "bfloat16": DataType.BF16,

@@ -11,6 +11,7 @@ from unittest.mock import patch
 import pytest
 import torch
 from sglang_simulator.dataset import GenericRequest, SimpleDataset
+from sglang_simulator.profiles import H200_LAB_PROFILE
 from sglang_simulator.simulation.benchmark import BenchmarkConfig
 from sglang_simulator.simulation.sglang.deterministic_sampling import (
     DeterministicRequestState,
@@ -323,6 +324,8 @@ def test_model_runner_uses_zero_width_logits():
 
 
 def test_device_kv_payload_preserves_logical_shape_without_storage():
+    h200_capacity = dict(H200_LAB_PROFILE.server_arg_defaults)["max_total_tokens"]
+
     class MockMHATokenToKVPool:
         def __init__(self, capacity: int, width: int):
             self.device = "cpu"
@@ -353,12 +356,12 @@ def test_device_kv_payload_preserves_logical_shape_without_storage():
 
     C_MHATokenToKVPoolHook.hook(MockMHATokenToKVPool)
     C_MLATokenToKVPoolHook.hook(MockMLATokenToKVPool)
-    mha_pool = MockMHATokenToKVPool(capacity=10_000_000, width=8192)
-    mla_pool = MockMLATokenToKVPool(capacity=10_000_000, width=576)
+    mha_pool = MockMHATokenToKVPool(capacity=h200_capacity, width=8192)
+    mla_pool = MockMLATokenToKVPool(capacity=h200_capacity, width=576)
 
     assert mha_pool.device == mla_pool.device == "cpu"
-    assert mha_pool.k_buffer.shape == (10_000_000, 8192)
-    assert mla_pool.kv_buffer.shape == (10_000_000, 1, 576)
+    assert mha_pool.k_buffer.shape == (h200_capacity, 8192)
+    assert mla_pool.kv_buffer.shape == (h200_capacity, 1, 576)
     assert mha_pool.k_buffer.is_meta
     assert mla_pool.kv_buffer.is_meta
 
@@ -429,7 +432,7 @@ def test_benchmark_sglang_runs_paged_decode(tmp_path):
 
 
 def test_large_modeled_kv_capacity_runs_without_payload_allocation(tmp_path):
-    max_total_tokens = 10_000_000
+    max_total_tokens = dict(H200_LAB_PROFILE.server_arg_defaults)["max_total_tokens"]
     runner = make_sglang_runner(
         tmp_path,
         max_total_tokens=max_total_tokens,

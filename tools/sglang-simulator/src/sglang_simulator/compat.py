@@ -4,6 +4,7 @@ import inspect
 import logging
 from importlib import metadata
 
+from sglang_simulator import hardware_policy
 from sglang_simulator.hardware_policy import (
     PHYSICAL_SERVER_ARG_OVERRIDES,
     SimulatorPolicyError,
@@ -12,6 +13,11 @@ from sglang_simulator.hardware_policy import (
     record_policy_context,
     recorded_policy_outcomes,
     server_arg_values,
+)
+from sglang_simulator.profiles import (
+    SimulatorProfileError,
+    apply_simulator_profile,
+    infer_explicit_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,17 +54,30 @@ def apply_simulator_server_args(target, *, explicit_fields=None) -> None:
         requested_values.get(name) == expected
         for name, expected in SIMULATOR_SERVER_ARG_OVERRIDES.items()
     )
+    defaults = hardware_policy._server_arg_defaults()
+    effective_explicit_fields = infer_explicit_fields(
+        target,
+        defaults=defaults,
+        explicit_fields=frozenset(explicit_fields or ()),
+    )
     try:
+        if not already_prepared:
+            apply_simulator_profile(
+                target,
+                explicit_fields=effective_explicit_fields,
+            )
+            requested_values = server_arg_values(target)
         evaluation = evaluate_simulator_policy(
             requested_values,
-            explicit_fields=frozenset(explicit_fields or ()),
+            explicit_fields=effective_explicit_fields,
             ignored_fields=(
                 frozenset(SIMULATOR_SERVER_ARG_OVERRIDES)
                 if already_prepared
                 else frozenset()
             ),
+            defaults=defaults,
         )
-    except SimulatorPolicyError as error:
+    except (SimulatorPolicyError, SimulatorProfileError) as error:
         raise SGLangCompatibilityError(str(error)) from error
 
     previous_warnings = set(recorded_policy_outcomes()["warn_no_op"])

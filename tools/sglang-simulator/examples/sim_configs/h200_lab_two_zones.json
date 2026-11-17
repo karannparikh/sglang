@@ -1,0 +1,19 @@
+{
+  "profile": "h200-lab-disaggregated-v1",
+  "topology_preset": "h200-lab-two-zones-v1",
+  "platform": {
+    "accelerator": {
+      "name": "H200 lab reference",
+      "vendor": "NVIDIA",
+      "hbm_capacity_gb": null,
+      "hbm_bandwidth_gb": null,
+      "inter_node_bandwidth_gb": null,
+      "intra_node_bandwidth_gb": null,
+      "tflops": {}
+    },
+    "num_device_per_node": 8
+  },
+  "scheduler": {
+    "backend_name": "sglang"
+  }
+}
