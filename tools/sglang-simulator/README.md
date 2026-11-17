@@ -199,6 +199,15 @@ integration, see
 process/HTTP path, see
 [`test_simulation_sglang_serving.py`](test/test_simulation_sglang_serving.py).
 
+### KV memory model
+
+The simulator keeps SGLang's native token/page allocators, request-to-token
+mapping, radix cache, cache keys, references, eviction, and events. Native MHA,
+MLA, packed single-pool, and host K/V payload tensors retain their logical
+shapes but use metadata-only storage, so modeled cache bytes are not physically
+allocated. Increasing `max_total_tokens` still increases allocator page
+bookkeeping; it does not allocate the corresponding K/V values.
+
 ## Simulation modes
 
 | Mode | Behavior |

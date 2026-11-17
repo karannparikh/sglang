@@ -17,6 +17,10 @@ from sglang_simulator.simulation.sglang.deterministic_sampling import (
     build_request_digest,
     sample_token_id,
 )
+from sglang_simulator.simulation.sglang.mem_pool_device import (
+    C_MHATokenToKVPoolHook,
+    C_MLATokenToKVPoolHook,
+)
 from sglang_simulator.simulation.sglang.model_runner import (
     C_ForwardBatchHook,
     C_ModelRunnerHook,
@@ -78,27 +82,32 @@ def _write_sim_config(tmp_path: Path) -> Path:
     return config_path
 
 
-def make_sglang_runner(tmp_path: Path):
+def make_sglang_runner(
+    tmp_path: Path,
+    *,
+    max_total_tokens: int = 4 * 1024,
+    max_running_requests: int | None = None,
+):
     os.environ["SGLANG_SIMULATOR_CONFIG_PATH"] = str(_write_sim_config(tmp_path))
 
+    from benchmark.simulator.bench_runner import SGLangBenchmarkRunner
     from sglang.srt.server_args import ServerArgs
 
-    from benchmark.simulator.bench_runner import SGLangBenchmarkRunner
-
-    runner = SGLangBenchmarkRunner(
-        server_args=ServerArgs(
-            model_path=str(ASSETS / "qwen3-8b"),
-            load_format="dummy",
-            device="cpu",
-            enable_hierarchical_cache=True,
-            hicache_ratio=2,
-            hicache_storage_backend="file",
-            hicache_storage_prefetch_policy="wait_complete",
-            max_total_tokens=4 * 1024,
-            page_size=256,
-            skip_tokenizer_init=True,
-        )
+    server_args = ServerArgs(
+        model_path=str(ASSETS / "qwen3-8b"),
+        load_format="dummy",
+        device="cpu",
+        enable_hierarchical_cache=True,
+        hicache_ratio=2,
+        hicache_storage_backend="file",
+        hicache_storage_prefetch_policy="wait_complete",
+        max_total_tokens=max_total_tokens,
+        page_size=256,
+        skip_tokenizer_init=True,
     )
+    if max_running_requests is not None:
+        server_args.max_running_requests = max_running_requests
+    runner = SGLangBenchmarkRunner(server_args=server_args)
     runner.clear_hicache_storage()
     return runner
 
@@ -313,6 +322,47 @@ def test_model_runner_uses_zero_width_logits():
     assert next_token_ids.dtype == torch.int64
 
 
+def test_device_kv_payload_preserves_logical_shape_without_storage():
+    class MockMHATokenToKVPool:
+        def __init__(self, capacity: int, width: int):
+            self.device = "cpu"
+            self.capacity = capacity
+            self.width = width
+            self._create_buffers_normal()
+
+        def _create_buffers_normal(self):
+            self.k_buffer = torch.zeros(
+                (self.capacity, self.width),
+                dtype=torch.bfloat16,
+                device=self.device,
+            )
+
+    class MockMLATokenToKVPool:
+        def __init__(self, capacity: int, width: int):
+            self.device = "cpu"
+            self.capacity = capacity
+            self.width = width
+            self._create_buffers()
+
+        def _create_buffers(self):
+            self.kv_buffer = torch.zeros(
+                (self.capacity, 1, self.width),
+                dtype=torch.bfloat16,
+                device=self.device,
+            )
+
+    C_MHATokenToKVPoolHook.hook(MockMHATokenToKVPool)
+    C_MLATokenToKVPoolHook.hook(MockMLATokenToKVPool)
+    mha_pool = MockMHATokenToKVPool(capacity=10_000_000, width=8192)
+    mla_pool = MockMLATokenToKVPool(capacity=10_000_000, width=576)
+
+    assert mha_pool.device == mla_pool.device == "cpu"
+    assert mha_pool.k_buffer.shape == (10_000_000, 8192)
+    assert mla_pool.kv_buffer.shape == (10_000_000, 1, 576)
+    assert mha_pool.k_buffer.is_meta
+    assert mla_pool.kv_buffer.is_meta
+
+
 def test_deterministic_output_tracks_request_identity(tmp_path):
     runner = make_sglang_runner(tmp_path)
     try:
@@ -376,3 +426,32 @@ def test_benchmark_sglang_runs_paged_decode(tmp_path):
     assert all(
         idx == 0 or req["created_time"] > 0 for idx, req in enumerate(request_stats)
     )
+
+
+def test_large_modeled_kv_capacity_runs_without_payload_allocation(tmp_path):
+    max_total_tokens = 10_000_000
+    runner = make_sglang_runner(
+        tmp_path,
+        max_total_tokens=max_total_tokens,
+        max_running_requests=32,
+    )
+    dataset = make_fixed_dataset(
+        4000,
+        1,
+        input_length=16,
+        output_length=2,
+    )
+
+    try:
+        scheduler_info = runner.engine._scheduler_init_result.scheduler_infos[0]
+        metrics = runner.benchmark(
+            BenchmarkConfig(request_rate=10, ignore_request_timestamp=False),
+            dataset=dataset,
+        )
+    finally:
+        runner.shutdown()
+
+    assert scheduler_info["max_total_num_tokens"] == max_total_tokens
+    assert metrics["completed"] == 1
+    assert metrics["total_input"] == 16
+    assert metrics["total_output"] == 2
