@@ -92,6 +92,8 @@ jobs:
           TORCH_EXTENSIONS_DIR: ${{ runner.temp }}/torch-extensions
         run: |
           python3 -m pytest -q tools/sglang-simulator/test/test_harness_activation.py
+          python3 -m pytest -q tools/sglang-simulator/test/test_hardware_policy.py
+          python3 -m pytest -q tools/sglang-simulator/test/test_memory_hardening.py
           python3 -m pytest -q tools/sglang-simulator/test/test_optional_aisimulate.py
           OMP_NUM_THREADS=2 python3 -m pytest -q tools/sglang-simulator/test/test_train_latency_model.py
           python3 -m pytest -q tools/sglang-simulator/test/test_simulation_sglang_runner.py

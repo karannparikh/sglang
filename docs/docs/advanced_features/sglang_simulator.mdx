@@ -10,7 +10,7 @@ SGLang Simulator reuses SGLang's scheduler, request lifecycle, and KV-cache impl
 
 SGLang Simulator tracks the current `main` branch and recent SGLang releases. The current integration is validated with `v0.5.16`, `v0.5.17`, `v0.5.18`, and `main`.
 
-The initial upstream scope uses one simulated worker with `tp_size=1`, `ep_size=1`, `dp_size=1`, and `pp_size=1`. A simulator configuration can describe a larger target system for latency prediction, but the SGLang runtime process topology remains single-worker.
+The physical simulator runtime uses one worker with `tp_size=1`, `ep_size=1`, `dp_size=1`, and `pp_size=1`. Requested TP, EP, DP, PP, and attention-CP values describe the logical target system used for prediction; they do not launch physical workers. Values in the simulator JSON `scheduler` section override the corresponding CLI topology values.
 
 The simulator supports:
 
@@ -69,18 +69,40 @@ export SGLANG_SIMULATOR_CONFIG_PATH=tools/sglang-simulator/examples/sim_configs/
 export SGLANG_USE_CPU_ENGINE=1
 
 python3 -m dynamo.sglang \
-  --model-path tools/sglang-simulator/test/assets/qwen3-8b \
-  --load-format dummy \
-  --device cpu \
-  --attention-backend torch_native \
-  --prefill-attention-backend torch_native \
-  --decode-attention-backend torch_native \
-  --sampling-backend pytorch \
-  --disable-overlap-schedule \
-  --disable-cuda-graph
+  --model-path tools/sglang-simulator/test/assets/qwen3-8b
 ```
 
-The marker installs simulator hooks before the harness imports SGLang and propagates activation to spawned scheduler and detokenizer workers. Startup stops if the hooks cannot be installed. The marker does not apply the standalone launcher's defaults, so the harness must still provide the simulator-compatible SGLang arguments shown above.
+The marker installs simulator hooks before the harness imports SGLang and propagates activation to spawned scheduler and detokenizer workers. Startup stops if the hooks cannot be installed. ServerArgs construction applies the same policy and physical simulator substrate as the standalone launcher, so external harnesses cannot silently retain an unsupported hardware value.
+
+### Hardware-sensitive options
+
+Simulator activation inventories hardware-sensitive ServerArgs and gives every
+field one explicit behavior:
+
+- `executed`: native scheduler and control-plane semantics run;
+- `modeled`: the compute predictor, logical memory, deterministic sampling, PD
+  transport, or topology implementation consumes the value;
+- `warn-no-op`: an explicitly requested or non-default value starts with a
+  field-specific warning because it has no meaningful simulator effect; and
+- `rejected`: an unsupported non-default value fails before workers start
+  rather than pretending physical hardware execution occurred.
+
+Untouched warn-no-op defaults stay quiet. Logical TP, EP, DP, PP, and
+attention-CP values are modeled while the physical runtime remains
+single-process. Non-default DCP is rejected because it has no predictor model.
+
+One deterministic startup line prefixed with
+`SGLang Simulator effective configuration:` summarizes the predictor, mode,
+deterministic-token version, logical KV capacity and page geometry, logical
+topology, PD link or topology, policy counts, requested warn-no-op outcomes,
+and forced physical runtime. It does not log every ServerArgs value.
+
+The maintained registry covers the complete hardware-facing ServerArgs groups
+and selected cross-cutting precision and memory-saver fields. When adding a
+field to those groups, update the registry with exactly one category, rationale,
+subsystem, and implementation consumer for modeled behavior. CI rejects
+unclassified or stale fields, duplicate or invalid entries, and modeled fields
+without a consumer assertion.
 
 ### Deterministic generated tokens
 
@@ -115,7 +137,9 @@ The benchmark injects logical arrival metadata into each request and displays th
 
 The output directory contains:
 
-- `metrics.json`: aggregate latency, throughput, and cache metrics;
+- `metrics.json`: aggregate latency, throughput, cache metrics, predicted
+  compute time, logical transfer bytes/time, and virtual KV capacity/page
+  geometry;
 - `request.jsonl`: per-request timing and cache information; and
 - `iteration.jsonl`: scheduler batch composition and predicted iteration latency.
 

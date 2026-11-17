@@ -44,31 +44,25 @@ def _has_cli_option(argv: list[str], option: str) -> bool:
 
 
 def apply_simulator_defaults(raw_args: argparse.Namespace, argv: list[str]) -> None:
-    """Avoid real model execution while preserving explicit SGLang options."""
-    if not _has_cli_option(argv, "--load-format"):
-        raw_args.load_format = "dummy"
-
+    """Prepare CPU-only model validation before final simulator policy."""
     if os.getenv("SGLANG_USE_CPU_ENGINE") != "1":
         return
-
-    if not _has_cli_option(argv, "--device"):
-        raw_args.device = "cpu"
-    if not _has_cli_option(argv, "--attention-backend"):
-        raw_args.attention_backend = "torch_native"
-    if not _has_cli_option(argv, "--sampling-backend"):
-        raw_args.sampling_backend = "pytorch"
-    if not (
-        _has_cli_option(argv, "--cuda-graph-backend-decode")
-        or _has_cli_option(argv, "--cuda-graph-backend-prefill")
-        or _has_cli_option(argv, "--disable-cuda-graph")
-    ):
-        raw_args.disable_cuda_graph = True
 
     # CPU-only model validation may still query CUDA capability while
     # constructing ServerArgs, before the simulator runner is spawned.
     import torch
 
     torch.cuda.get_device_capability = lambda *_args, **_kwargs: (10, 0)
+
+
+def _explicit_server_arg_fields(
+    parser: argparse.ArgumentParser, argv: list[str]
+) -> set[str]:
+    explicit = set()
+    for action in parser._actions:
+        if any(_has_cli_option(argv, option) for option in action.option_strings):
+            explicit.add(action.dest)
+    return explicit
 
 
 if __name__ == "__main__":
@@ -89,7 +83,10 @@ if __name__ == "__main__":
     argv = sys.argv[1:]
     raw_args = parser.parse_args(argv)
     apply_simulator_defaults(raw_args, argv)
-    apply_simulator_server_args(raw_args)
+    apply_simulator_server_args(
+        raw_args,
+        explicit_fields=_explicit_server_arg_fields(parser, argv),
+    )
     server_args = ServerArgs.from_cli_args(raw_args)
     simulation_args = SimulationArgs.from_cli_args(raw_args)
 

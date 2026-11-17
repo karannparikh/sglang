@@ -114,6 +114,20 @@ class ConfigManager:
 
     @classmethod
     def set_scheduler_config(cls, config: SchedulerConfig):
+        from sglang_simulator.hardware_policy import requested_server_arg_values
+
+        requested = requested_server_arg_values()
+        logical_topology_fields = {
+            "tp_size": "tp_size",
+            "ep_size": "ep_size",
+            "dp_size": "dp_size",
+            "pp_size": "pp_size",
+            "attn_cp_size": "cp_size",
+        }
+        for server_arg_name, config_name in logical_topology_fields.items():
+            if server_arg_name in requested:
+                setattr(config, config_name, requested[server_arg_name])
+
         # The configuration from the external config file has higher priority.
         external_config = cls._get_raw_config().get("scheduler", {})
         for field_name in [
@@ -167,6 +181,16 @@ class ConfigManager:
     @classmethod
     def get_scheduler_config(cls):
         return cls._scheduler_config
+
+    @classmethod
+    def get_predictor_summary(cls) -> tuple[str, str]:
+        predictor = cls._get_raw_config().get("predictor", {})
+        name = predictor.get("name", "unknown")
+        mode = predictor.get(
+            "database_mode",
+            predictor.get("miss_strategy", "default"),
+        )
+        return str(name), str(mode)
 
     @classmethod
     def _parse_server_args(cls, server_args: dict, backend: str) -> SchedulerConfig:

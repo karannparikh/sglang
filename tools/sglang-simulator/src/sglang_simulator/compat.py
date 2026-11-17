@@ -1,25 +1,22 @@
 """Early compatibility checks for the SGLang surfaces used by the simulator."""
 
 import inspect
+import logging
 from importlib import metadata
 
-SIMULATOR_SERVER_ARG_OVERRIDES = {
-    # The simulator models the target deployment topology separately through
-    # sim_config.scheduler. Keep the SGLang runtime single-process so host-side
-    # simulator work is not multiplied by the modeled parallel world size.
-    "tp_size": 1,
-    "ep_size": 1,
-    "dp_size": 1,
-    "pp_size": 1,
-    "attn_cp_size": 1,
-    "dcp_size": 1,
-    "disable_overlap_schedule": True,
-    "disable_cuda_graph": True,
-    "attention_backend": "torch_native",
-    "prefill_attention_backend": "torch_native",
-    "decode_attention_backend": "torch_native",
-    "disaggregation_transfer_backend": "simulator",
-}
+from sglang_simulator.hardware_policy import (
+    PHYSICAL_SERVER_ARG_OVERRIDES,
+    SimulatorPolicyError,
+    evaluate_simulator_policy,
+    policy_context_recorded,
+    record_policy_context,
+    recorded_policy_outcomes,
+    server_arg_values,
+)
+
+logger = logging.getLogger(__name__)
+
+SIMULATOR_SERVER_ARG_OVERRIDES = PHYSICAL_SERVER_ARG_OVERRIDES
 
 
 class SGLangCompatibilityError(RuntimeError):
@@ -44,8 +41,42 @@ def _require_parameters(function, required: set[str], surface: str) -> None:
         )
 
 
-def apply_simulator_server_args(target) -> None:
-    """Apply simulator-owned values before constructing the final ServerArgs."""
+def apply_simulator_server_args(target, *, explicit_fields=None) -> None:
+    """Classify requested values, then apply simulator physical-runtime values."""
+    requested_values = server_arg_values(target)
+    already_prepared = policy_context_recorded() and all(
+        requested_values.get(name) == expected
+        for name, expected in SIMULATOR_SERVER_ARG_OVERRIDES.items()
+    )
+    try:
+        evaluation = evaluate_simulator_policy(
+            requested_values,
+            explicit_fields=frozenset(explicit_fields or ()),
+            ignored_fields=(
+                frozenset(SIMULATOR_SERVER_ARG_OVERRIDES)
+                if already_prepared
+                else frozenset()
+            ),
+        )
+    except SimulatorPolicyError as error:
+        raise SGLangCompatibilityError(str(error)) from error
+
+    previous_warnings = set(recorded_policy_outcomes()["warn_no_op"])
+    for field, message in zip(
+        evaluation.warning_fields,
+        evaluation.warning_messages,
+        strict=True,
+    ):
+        if field not in previous_warnings:
+            logger.warning("SGLang Simulator: %s", message)
+    if already_prepared:
+        return
+
+    record_policy_context(
+        requested_values=requested_values,
+        evaluation=evaluation,
+    )
+
     if isinstance(target, dict):
         target.update(SIMULATOR_SERVER_ARG_OVERRIDES)
         return
@@ -57,9 +88,9 @@ def apply_simulator_server_args(target) -> None:
 def validate_simulator_server_args(server_args) -> None:
     """Fail early if a process bypassed a simulator-owned launch entry point."""
     mismatches = [
-        f"{name}={getattr(server_args, name, None)!r} (expected {expected!r})"
+        f"{name}={getattr(server_args, name)!r} (expected {expected!r})"
         for name, expected in SIMULATOR_SERVER_ARG_OVERRIDES.items()
-        if getattr(server_args, name, None) != expected
+        if getattr(server_args, name) != expected
     ]
     if mismatches:
         raise SGLangCompatibilityError(
