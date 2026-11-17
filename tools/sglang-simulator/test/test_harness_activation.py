@@ -335,6 +335,30 @@ def test_worker_bootstrap_marker_activates_child_interpreter(
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+def test_resource_tracker_skips_simulator_activation(scratch_dir, installed_simulator):
+    env, hook_log, python = _make_subprocess_env(scratch_dir, installed_simulator)
+    env["SGLANG_SIMULATOR_BOOTSTRAP"] = "1"
+
+    result = _run_python(
+        python,
+        env,
+        f"""
+        from multiprocessing import resource_tracker
+        from multiprocessing.shared_memory import SharedMemory
+        from pathlib import Path
+
+        shared_memory = SharedMemory(create=True, size=1)
+        shared_memory.close()
+        shared_memory.unlink()
+        resource_tracker._resource_tracker._stop()
+
+        assert Path({str(hook_log)!r}).read_text().splitlines() == ["installed"]
+        """,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 def test_standalone_bootstrap_sets_worker_marker(scratch_dir, installed_simulator):
     env, hook_log, python = _make_subprocess_env(scratch_dir, installed_simulator)
 
