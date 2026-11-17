@@ -574,5 +574,6 @@ POSITIONAL_FIELD_ORDER = (
     "disaggregation_simulator_fixed_latency_ms",
     "disaggregation_simulator_topology",
     "disaggregation_simulator_location",
+    "skip_detokenizer_init",
 )
 # fmt: on

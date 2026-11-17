@@ -571,6 +571,7 @@ class Scheduler(
             not get_schedule().disable_overlap_schedule and use_mlx()
         )
         self.skip_tokenizer_init = get_serving().skip_tokenizer_init
+        self.skip_detokenizer_init = get_serving().skip_detokenizer_init
         self.stream_interval = get_serving().stream_interval
         self.spec_algorithm = SpeculativeAlgorithm.from_string(
             get_spec().speculative_algorithm
@@ -892,6 +893,7 @@ class Scheduler(
             # scheduler gates its tokenizer init on the same value, and the two
             # must not be able to disagree.
             skip_tokenizer_init=self.skip_tokenizer_init,
+            skip_detokenizer_init=self.skip_detokenizer_init,
             metrics_enabled=get_observability().enable_metrics
             and (
                 get_parallel().attn_tp_rank == 0
@@ -2906,6 +2908,7 @@ class Scheduler(
             spec_algorithm=self.spec_algorithm,
             disaggregation_mode=self.disaggregation_mode,
             skip_tokenizer_init=self.skip_tokenizer_init,
+            skip_detokenizer_init=self.skip_detokenizer_init,
             enable_hicache_storage=lambda: (
                 self.enable_hicache_storage or self.enable_lmcache
             ),

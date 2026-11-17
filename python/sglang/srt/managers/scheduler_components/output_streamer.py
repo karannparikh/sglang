@@ -96,6 +96,7 @@ class SchedulerOutputStreamer:
     spec_algorithm: SpeculativeAlgorithm
     disaggregation_mode: DisaggregationMode
     skip_tokenizer_init: InitVar[bool]
+    skip_detokenizer_init: InitVar[bool]
     enable_hicache_storage: Callable[[], bool]
     # When SGLANG_RUST_SERVER is on, generation output is pushed to the embedded
     # Rust egress ring via `rust_server.push_generation` instead of the zmq
@@ -108,10 +109,12 @@ class SchedulerOutputStreamer:
     output_sink: OutputSink = field(init=False)
     enable_metrics: bool = field(init=False)
 
-    def __post_init__(self, skip_tokenizer_init: bool) -> None:
+    def __post_init__(
+        self, skip_tokenizer_init: bool, skip_detokenizer_init: bool
+    ) -> None:
         if self.rust_server is not None:
             self.output_sink = OutputSink.RUST
-        elif skip_tokenizer_init:
+        elif skip_tokenizer_init or skip_detokenizer_init:
             self.output_sink = OutputSink.TOKENIZER
         else:
             self.output_sink = OutputSink.DETOKENIZER
