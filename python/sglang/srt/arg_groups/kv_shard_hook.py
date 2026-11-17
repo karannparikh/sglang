@@ -238,10 +238,10 @@ def handle_kv_cache_sharding(server_args: Any, gpu_mem: Optional[float] = None) 
         )
 
     validate_kv_shard_attention_backend(server_args, cfg)
-    if cfg.disaggregation_transfer_backend not in ("mooncake", "nixl"):
+    if cfg.disaggregation_transfer_backend not in ("mooncake", "nixl", "simulator"):
         raise ValueError(
             "--enable-kv-cache-sharding currently only supports the mooncake "
-            "and nixl transfer backends: both route sends through "
+            "nixl, and simulator transfer backends: all route sends through "
             "CommonKVSender._prepare_send_indices and pair destinations by "
             "fancy index. Got --disaggregation-transfer-backend "
             f"{cfg.disaggregation_transfer_backend!r}."

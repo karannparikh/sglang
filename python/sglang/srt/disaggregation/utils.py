@@ -1009,6 +1009,7 @@ class TransferBackend(Enum):
     NIXL = "nixl"
     ASCEND = "ascend"
     FAKE = "fake"
+    SIMULATOR = "simulator"
 
 
 class KVClassType(Enum):
@@ -1118,6 +1119,20 @@ def get_kv_class(
             KVClassType.MANAGER: FakeKVManager,
             KVClassType.SENDER: FakeKVSender,
             KVClassType.RECEIVER: FakeKVReceiver,
+        }
+    elif transfer_backend == TransferBackend.SIMULATOR:
+        from sglang.srt.disaggregation.simulator import (
+            SimulatorKVBootstrapServer,
+            SimulatorKVManager,
+            SimulatorKVReceiver,
+            SimulatorKVSender,
+        )
+
+        class_mapping = {
+            KVClassType.MANAGER: SimulatorKVManager,
+            KVClassType.SENDER: SimulatorKVSender,
+            KVClassType.RECEIVER: SimulatorKVReceiver,
+            KVClassType.BOOTSTRAP_SERVER: SimulatorKVBootstrapServer,
         }
     else:
         raise ValueError(f"Unsupported transfer backend: {transfer_backend}")

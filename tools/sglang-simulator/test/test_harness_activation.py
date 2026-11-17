@@ -395,6 +395,7 @@ def test_external_harness_server_args_satisfy_simulator_contract():
         attention_backend="torch_native",
         prefill_attention_backend="torch_native",
         decode_attention_backend="torch_native",
+        disaggregation_transfer_backend="simulator",
     )
 
     validate_simulator_server_args(server_args)

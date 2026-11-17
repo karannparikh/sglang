@@ -208,6 +208,26 @@ shapes but use metadata-only storage, so modeled cache bytes are not physically
 allocated. Increasing `max_total_tokens` still increases allocator page
 bookkeeping; it does not allocate the corresponding K/V values.
 
+### PD transfer model
+
+Simulator activation selects SGLang's `simulator` disaggregation transfer
+backend. It keeps the common bootstrap registry, sender/receiver lifecycle,
+chunking, metadata exchange, polling states, aborts, timeouts, cleanup, and
+transfer metrics, but does not register memory or copy payload values.
+
+Each transfer chunk is modeled independently as:
+
+```text
+fixed latency + logical bytes / bandwidth
+```
+
+Logical bytes come from the real KV and state item sizes and the actual indices
+sent by SGLang. The backend stores only those counts and small control messages.
+Configure the initial single-link model with
+`--disaggregation-simulator-bandwidth-gb-per-s` and
+`--disaggregation-simulator-fixed-latency-ms`. This layer does not model worker
+placement, shared-link contention, or response-KV return.
+
 ## Simulation modes
 
 | Mode | Behavior |

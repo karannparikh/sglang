@@ -128,6 +128,7 @@ DISAGG_TRANSFER_BACKEND_CHOICES = [
     "nixl",
     "ascend",
     "fake",
+    "simulator",
     "mori",
     "mooncake_tcp",
 ]
