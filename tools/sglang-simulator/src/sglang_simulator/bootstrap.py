@@ -5,6 +5,14 @@ import sys
 import traceback
 
 _BOOTSTRAP_ENV = "SGLANG_SIMULATOR_BOOTSTRAP"
+_RESOURCE_TRACKER_COMMAND = "from multiprocessing.resource_tracker import main"
+
+
+def _is_resource_tracker_process() -> bool:
+    return any(
+        argument.lstrip().startswith(_RESOURCE_TRACKER_COMMAND)
+        for argument in getattr(sys, "orig_argv", ())
+    )
 
 
 def activate() -> None:
@@ -33,5 +41,5 @@ def activate() -> None:
 
 
 def activate_from_env() -> None:
-    if os.environ.get(_BOOTSTRAP_ENV) == "1":
+    if os.environ.get(_BOOTSTRAP_ENV) == "1" and not _is_resource_tracker_process():
         activate()
