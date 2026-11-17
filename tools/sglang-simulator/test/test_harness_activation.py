@@ -131,15 +131,19 @@ def installed_simulator(simulator_wheel, tmp_path_factory) -> tuple[Path, Path, 
         hook.install_class_hooks = install_class_hooks
 
         hook_modules = (
+            "audio_stub",
             "cache_controller",
             "hicache_storage",
             "mem_cache_allocator",
             "mem_pool_device",
             "mem_pool_host",
             "model_runner",
+            "quantization_registry",
+            "redis_stub",
             "scheduler",
             "server_args",
             "unified_radix_cache",
+            "xgrammar_stub",
         )
         for module_name in hook_modules:
             module = add_module(
@@ -147,6 +151,19 @@ def installed_simulator(simulator_wheel, tmp_path_factory) -> tuple[Path, Path, 
                 f"sglang_simulator.simulation.sglang.{module_name}",
             )
             module.__getattr__ = lambda _name: object()
+
+        sys.modules[
+            "sglang_simulator.simulation.sglang.audio_stub"
+        ].install_soundfile_stub = lambda: None
+        sys.modules[
+            "sglang_simulator.simulation.sglang.quantization_registry"
+        ].install_unquantized_registry = lambda: None
+        sys.modules[
+            "sglang_simulator.simulation.sglang.redis_stub"
+        ].install_redis_stub = lambda: None
+        sys.modules[
+            "sglang_simulator.simulation.sglang.xgrammar_stub"
+        ].install_xgrammar_stub = lambda: None
 
         sgl_kernel_hook = add_module(
             sglang_package,
@@ -185,6 +202,7 @@ def _make_subprocess_env(
     env = os.environ.copy()
     env.pop("PYTHONPATH", None)
     env.pop("SGLANG_SIMULATOR_BOOTSTRAP", None)
+    env.pop("TVM_FFI_DISABLE_TORCH_C_DLPACK", None)
     env["SGLANG_SIMULATOR_HOOK_LOG"] = str(hook_log)
     return env, hook_log, python
 
@@ -290,6 +308,7 @@ def test_worker_bootstrap_marker_activates_child_interpreter(
     import os
 
     assert os.environ["SGLANG_SIMULATOR_BOOTSTRAP"] == "1"
+    assert os.environ["TVM_FFI_DISABLE_TORCH_C_DLPACK"] == "1"
     """
 
     result = _run_python(
@@ -333,6 +352,7 @@ def test_standalone_bootstrap_sets_worker_marker(scratch_dir, installed_simulato
 
         install_simulator_hooks()
         assert os.environ["SGLANG_SIMULATOR_BOOTSTRAP"] == "1"
+        assert os.environ["TVM_FFI_DISABLE_TORCH_C_DLPACK"] == "1"
         assert Path({str(hook_log)!r}).read_text().splitlines() == ["installed"]
         """,
     )

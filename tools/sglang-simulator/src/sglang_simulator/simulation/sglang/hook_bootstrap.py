@@ -1,9 +1,25 @@
 """Install SGLang Simulator hooks in the parent and spawned SGLang worker processes."""
 
+import logging.config
 import os
 
 # Spawned interpreters inherit this marker before processing startup .pth files.
 os.environ["SGLANG_SIMULATOR_BOOTSTRAP"] = "1"
+# The simulator never uses EnvTensorAllocator. Avoid TVM FFI JIT-compiling its
+# optional PyTorch DLPack bridge in every parent and spawned worker.
+os.environ["TVM_FFI_DISABLE_TORCH_C_DLPACK"] = "1"
+
+from sglang_simulator.simulation.sglang.audio_stub import install_soundfile_stub
+from sglang_simulator.simulation.sglang.quantization_registry import (
+    install_unquantized_registry,
+)
+from sglang_simulator.simulation.sglang.redis_stub import install_redis_stub
+from sglang_simulator.simulation.sglang.xgrammar_stub import install_xgrammar_stub
+
+install_soundfile_stub()
+install_unquantized_registry()
+install_redis_stub()
+install_xgrammar_stub()
 
 import sglang_simulator.hook as sglang_simulator_hook
 from sglang_simulator.simulation.sglang import (

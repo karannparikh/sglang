@@ -102,6 +102,11 @@ from sglang.srt.managers.req_types import (
     BaseFinishReason,
     MultimodalDataItem,
     MultimodalInputs,
+)
+from sglang.srt.managers.req_types import (
+    MultimodalProcessorOutput as MultimodalProcessorOutput,
+)
+from sglang.srt.managers.req_types import (
     ReturnHiddenStatesMode,
     SamplingLogprobsMode,
     get_request_return_hidden_states_mode,
