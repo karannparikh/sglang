@@ -1,5 +1,6 @@
 import ctypes
 import inspect
+import json
 import threading
 import unittest
 from types import SimpleNamespace
@@ -7,7 +8,7 @@ from unittest.mock import MagicMock
 
 import msgspec
 import numpy as np
-
+from sglang.srt.arg_groups.overrides import resolution_result
 from sglang.srt.arg_groups.pd_disaggregation_hook import handle_pd_disaggregation
 from sglang.srt.disaggregation.base.conn import KVArgs, KVPoll
 from sglang.srt.disaggregation.common.conn import AbortNotification
@@ -24,6 +25,11 @@ from sglang.srt.disaggregation.simulator.conn import (
     compute_logical_transfer_bytes,
     modeled_transfer_latency_s,
 )
+from sglang.srt.disaggregation.simulator_topology import (
+    DEFAULT_LINK_NAME,
+    SimulatorTopology,
+    SimulatorTopologyError,
+)
 from sglang.srt.disaggregation.utils import (
     KVClassType,
     TransferBackend,
@@ -34,6 +40,28 @@ from sglang.test.ci.ci_register import register_cpu_ci
 from sglang.test.test_utils import CustomTestCase
 
 register_cpu_ci(est_time=10, suite="base-a-test-cpu")
+
+TOPOLOGY = {
+    "levels": ["region", "rack", "node"],
+    "links": {
+        "region": {
+            "bandwidth_gb_per_s": 10,
+            "fixed_latency_ms": 1,
+        },
+        "rack": {
+            "bandwidth_gb_per_s": 100,
+            "fixed_latency_ms": 0.1,
+        },
+        "node": {
+            "bandwidth_gb_per_s": 1000,
+            "fixed_latency_ms": 0.01,
+        },
+        DEFAULT_LINK_NAME: {
+            "bandwidth_gb_per_s": 1,
+            "fixed_latency_ms": 10,
+        },
+    },
+}
 
 
 def _kv_args() -> KVArgs:
@@ -72,9 +100,50 @@ def _bare_manager() -> SimulatorKVManager:
     manager.enable_deferred_decode_kv_release = False
     manager.bandwidth_gb_per_s = 1.0
     manager.fixed_latency_ms = 2.0
+    manager.topology = None
+    manager.location = None
     manager.pp_group = SimpleNamespace(is_last_rank=True)
     manager.send_kv_status_message = MagicMock()
     return manager
+
+
+def _prepare_transfer_target(
+    manager: SimulatorKVManager,
+    *,
+    room: int,
+    location: list[str] | None,
+) -> None:
+    manager.request_status[room] = KVPoll.WaitingForInput
+    manager.transfer_infos[room] = {
+        "decode-0": SimulatorTransferInfo(
+            room=room,
+            peer_id="decode-0",
+            endpoint="127.0.0.1",
+            dst_port=8001,
+            required_dst_info_num=1,
+            num_kv_indices=1,
+            state_index_counts=[],
+            aux_index=None,
+            decode_prefix_len=None,
+            is_dummy=False,
+        )
+    }
+    manager.decode_kv_args_table["decode-0"] = SimulatorRegistration(
+        peer_id="decode-0",
+        endpoint="127.0.0.1",
+        dst_port=8001,
+        kv_item_lens=[64, 64],
+        aux_item_lens=[],
+        state_item_lens=[[8, 4], [16]],
+        page_size=4,
+        attn_tp_size=1,
+        attn_tp_rank=0,
+        dcp_size=1,
+        dcp_rank=0,
+        location=location,
+    )
+    manager.kv_args.aux_item_lens = []
+    manager.kv_args.aux_data_ptrs = []
 
 
 class TestSimulatorBackendSelection(CustomTestCase):
@@ -105,12 +174,22 @@ class TestSimulatorBackendSelection(CustomTestCase):
             (
                 "disaggregation_simulator_bandwidth_gb_per_s",
                 0,
-                "bandwidth-gb-per-s must be positive",
+                "bandwidth-gb-per-s must be finite and positive",
+            ),
+            (
+                "disaggregation_simulator_bandwidth_gb_per_s",
+                float("inf"),
+                "bandwidth-gb-per-s must be finite and positive",
             ),
             (
                 "disaggregation_simulator_fixed_latency_ms",
                 -1,
-                "fixed-latency-ms must be non-negative",
+                "fixed-latency-ms must be finite and non-negative",
+            ),
+            (
+                "disaggregation_simulator_fixed_latency_ms",
+                float("nan"),
+                "fixed-latency-ms must be finite and non-negative",
             ),
         ):
             with self.subTest(field=field):
@@ -121,6 +200,98 @@ class TestSimulatorBackendSelection(CustomTestCase):
                 )
                 with self.assertRaisesRegex(ValueError, message):
                     handle_pd_disaggregation(args)
+
+    def test_topology_is_canonicalized_during_startup_validation(self):
+        args = ServerArgs(
+            model_path="dummy",
+            disaggregation_transfer_backend="simulator",
+            disaggregation_simulator_topology=json.dumps(
+                {
+                    "links": dict(reversed(list(TOPOLOGY["links"].items()))),
+                    "levels": TOPOLOGY["levels"],
+                },
+                indent=2,
+            ),
+            disaggregation_simulator_location="r1/rack-1/node-1",
+        )
+
+        handle_pd_disaggregation(args)
+
+        self.assertEqual(
+            resolution_result(args, "disaggregation_simulator_topology"),
+            SimulatorTopology.from_config(TOPOLOGY).to_json(),
+        )
+
+    def test_startup_rejects_malformed_topology_and_location(self):
+        malformed = json.loads(json.dumps(TOPOLOGY))
+        malformed["links"].pop("rack")
+        for topology, location, message in (
+            (malformed, "r1/rack-1/node-1", "missing=\\['rack'\\]"),
+            (TOPOLOGY, "r1/rack-1", "must have exactly 3 non-empty components"),
+        ):
+            with self.subTest(message=message):
+                args = ServerArgs(
+                    model_path="dummy",
+                    disaggregation_transfer_backend="simulator",
+                    disaggregation_simulator_topology=json.dumps(topology),
+                    disaggregation_simulator_location=location,
+                )
+                with self.assertRaisesRegex(SimulatorTopologyError, message):
+                    handle_pd_disaggregation(args)
+
+
+class TestSimulatorTopology(CustomTestCase):
+    def test_deepest_shared_level_selects_link_without_reusing_parent_names(self):
+        topology = SimulatorTopology.from_config(TOPOLOGY)
+        source = ("region-a", "rack-1", "node-1")
+        cases = (
+            (("region-a", "rack-1", "node-1"), "node"),
+            (("region-a", "rack-1", "node-2"), "rack"),
+            (("region-a", "rack-2", "node-1"), "region"),
+            (("region-b", "rack-1", "node-1"), DEFAULT_LINK_NAME),
+        )
+
+        for destination, expected in cases:
+            with self.subTest(destination=destination):
+                self.assertEqual(
+                    topology.link_between(source, destination).name,
+                    expected,
+                )
+                self.assertEqual(
+                    topology.link_between(destination, source).name,
+                    expected,
+                )
+
+    def test_malformed_topology_values_are_rejected(self):
+        mutations = (
+            lambda raw: raw.update(levels=["region", "region", "node"]),
+            lambda raw: raw["links"].update(
+                unknown={
+                    "bandwidth_gb_per_s": 1,
+                    "fixed_latency_ms": 0,
+                }
+            ),
+            lambda raw: raw["links"]["node"].update(bandwidth_gb_per_s=0),
+            lambda raw: raw["links"]["node"].update(fixed_latency_ms=float("inf")),
+        )
+
+        for mutate in mutations:
+            raw = json.loads(json.dumps(TOPOLOGY))
+            mutate(raw)
+            with self.subTest(raw=raw):
+                with self.assertRaises(SimulatorTopologyError):
+                    SimulatorTopology.from_config(raw)
+
+    def test_serialization_is_deterministic(self):
+        reordered = {
+            "links": dict(reversed(list(TOPOLOGY["links"].items()))),
+            "levels": list(TOPOLOGY["levels"]),
+        }
+
+        self.assertEqual(
+            SimulatorTopology.from_config(TOPOLOGY).to_json(),
+            SimulatorTopology.from_config(reordered).to_json(),
+        )
 
 
 class TestSimulatorTransferModel(CustomTestCase):
@@ -192,6 +363,7 @@ class TestSimulatorTransferModel(CustomTestCase):
         manager.kv_args.kv_item_lens = [1 << 40]
         manager.kv_args.aux_item_lens = [1 << 20]
         manager.kv_args.state_item_lens = [[1 << 35]]
+        manager.location = ("region-a", "rack-1", "node-1")
 
         registration = manager.build_receiver_registration_message()
         transfer = manager.build_receiver_metadata_message(
@@ -212,6 +384,30 @@ class TestSimulatorTransferModel(CustomTestCase):
 
 
 class TestSimulatorControlPlane(CustomTestCase):
+    def test_registration_propagates_endpoint_location(self):
+        decode = _bare_manager()
+        decode.local_ip = "127.0.0.1"
+        decode.rank_port = 8001
+        decode.attn_tp_size = 1
+        decode.attn_tp_rank = 0
+        decode.dcp_size = 1
+        decode.dcp_rank = 0
+        decode.location = ("region-a", "rack-1", "node-1")
+
+        message = decode.build_receiver_registration_message()
+        registration = msgspec.msgpack.decode(message[1], type=SimulatorRegistration)
+
+        prefill = _bare_manager()
+        prefill._handle_registration_message(message)
+        self.assertEqual(
+            registration.location,
+            ["region-a", "rack-1", "node-1"],
+        )
+        self.assertEqual(
+            prefill.decode_kv_args_table[registration.peer_id].location,
+            registration.location,
+        )
+
     def test_registration_and_transfer_metadata_reach_waiting_for_input(self):
         manager = _bare_manager()
         room = 41
@@ -320,6 +516,76 @@ class TestSimulatorControlPlane(CustomTestCase):
         self.assertIs(manager.pop_transfer_stats(room), stats)
         self.assertNotIn(room, manager.transfer_stats)
 
+    def test_transfer_cost_uses_actual_endpoint_distance(self):
+        topology = SimulatorTopology.from_config(TOPOLOGY)
+        source = ("region-a", "rack-1", "node-1")
+        cases = (
+            (["region-a", "rack-1", "node-1"], "node"),
+            (["region-a", "rack-1", "node-2"], "rack"),
+            (["region-a", "rack-2", "node-1"], "region"),
+            (["region-b", "rack-1", "node-1"], DEFAULT_LINK_NAME),
+        )
+        latencies = []
+
+        for room, (location, expected_link) in enumerate(cases, start=50):
+            manager = _bare_manager()
+            manager.topology = topology
+            manager.location = source
+            _prepare_transfer_target(
+                manager,
+                room=room,
+                location=location,
+            )
+
+            manager.add_transfer_request(
+                bootstrap_room=room,
+                kv_indices=np.array([3], dtype=np.int32),
+                index_slice=slice(0, 1),
+                is_last_chunk=True,
+            )
+            task = manager._transfer_heap[0][2]
+            self.assertEqual(task.link_name, expected_link)
+            latencies.append(task.modeled_latency_s)
+
+        self.assertEqual(latencies, sorted(latencies))
+        self.assertEqual(len(set(latencies)), len(latencies))
+
+    def test_unplaced_endpoint_keeps_global_link_cost(self):
+        topology = SimulatorTopology.from_config(TOPOLOGY)
+        cases = (
+            (
+                None,
+                ("region-a", "rack-1", "node-1"),
+                ["region-a", "rack-1", "node-1"],
+            ),
+            (topology, None, ["region-a", "rack-1", "node-1"]),
+            (topology, ("region-a", "rack-1", "node-1"), None),
+        )
+
+        for room, (
+            configured_topology,
+            source_location,
+            target_location,
+        ) in enumerate(cases, start=60):
+            manager = _bare_manager()
+            manager.topology = configured_topology
+            manager.location = source_location
+            _prepare_transfer_target(
+                manager,
+                room=room,
+                location=target_location,
+            )
+
+            manager.add_transfer_request(
+                bootstrap_room=room,
+                kv_indices=np.array([3], dtype=np.int32),
+                index_slice=slice(0, 1),
+                is_last_chunk=True,
+            )
+            task = manager._transfer_heap[0][2]
+            self.assertIsNone(task.link_name)
+            self.assertAlmostEqual(task.modeled_latency_s, 0.002000128)
+
     def test_auxiliary_metadata_values_cross_without_kv_payload(self):
         room = 45
         src = _bare_manager()
@@ -337,6 +603,7 @@ class TestSimulatorControlPlane(CustomTestCase):
             target_aux_item_lens=[[4]],
             logical_bytes=4,
             modeled_latency_s=0.002,
+            link_name=None,
             aux_index=1,
             send_record=object(),
         )

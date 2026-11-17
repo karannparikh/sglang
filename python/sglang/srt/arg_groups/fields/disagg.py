@@ -79,6 +79,23 @@ class Disagg(msgspec.Struct):
         "Fixed per-chunk latency in milliseconds for the simulator PD transfer "
         "backend. Default is 1.",
     ] = 1.0
+    disaggregation_simulator_topology: A[
+        Optional[str],
+        Arg(
+            help="Optional JSON hierarchy for the simulator PD backend. Levels "
+            "are ordered outermost to innermost; links must contain one entry "
+            "per level plus 'default', each with bandwidth_gb_per_s and "
+            "fixed_latency_ms.",
+            resolvable=True,
+        ),
+    ] = None
+    disaggregation_simulator_location: A[
+        Optional[str],
+        (
+            "Optional slash-separated location for this simulator worker, with one "
+            "component per configured topology level."
+        ),
+    ] = None
     disaggregation_enable_kv_checksum: A[
         bool,
         "Compute an Adler-32 checksum over each request's KV pages on prefill "

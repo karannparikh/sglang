@@ -225,8 +225,30 @@ Logical bytes come from the real KV and state item sizes and the actual indices
 sent by SGLang. The backend stores only those counts and small control messages.
 Configure the initial single-link model with
 `--disaggregation-simulator-bandwidth-gb-per-s` and
-`--disaggregation-simulator-fixed-latency-ms`. This layer does not model worker
-placement, shared-link contention, or response-KV return.
+`--disaggregation-simulator-fixed-latency-ms`.
+
+Workers can optionally advertise
+`--disaggregation-simulator-location region/rack/node` and share a topology:
+
+```json
+{
+  "levels": ["region", "rack", "node"],
+  "links": {
+    "region": {"bandwidth_gb_per_s": 10, "fixed_latency_ms": 0.5},
+    "rack": {"bandwidth_gb_per_s": 50, "fixed_latency_ms": 0.05},
+    "node": {"bandwidth_gb_per_s": 400, "fixed_latency_ms": 0.01},
+    "default": {"bandwidth_gb_per_s": 1, "fixed_latency_ms": 5}
+  }
+}
+```
+
+Pass the compact JSON document through
+`--disaggregation-simulator-topology`. The deepest shared location level selects
+the link; endpoints with no shared level use `default`. If the topology or
+either endpoint location is absent, transfers keep the global single-link
+settings. The harness remains responsible for launching and placing workers.
+The simulator does not model shared-link contention, routing, failures,
+retransmission, or response-KV return.
 
 ## Simulation modes
 

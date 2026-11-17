@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import heapq
 import logging
+import math
 import threading
 import time
 from typing import List, Optional, Tuple
@@ -9,7 +10,6 @@ from typing import List, Optional, Tuple
 import msgspec
 import numpy as np
 import numpy.typing as npt
-
 from sglang.srt.disaggregation.base.conn import (
     KVArgs,
     KVPoll,
@@ -26,6 +26,12 @@ from sglang.srt.disaggregation.common.conn import (
 )
 from sglang.srt.disaggregation.common.utils import AuxDataCodec
 from sglang.srt.disaggregation.mode import DisaggregationMode
+from sglang.srt.disaggregation.simulator_topology import (
+    SimulatorLink,
+    SimulatorTopology,
+    load_simulator_topology,
+    parse_simulator_location,
+)
 from sglang.srt.runtime_context import get_disagg
 from sglang.srt.server_args import ServerArgs
 from sglang.srt.utils.network import NetworkAddress
@@ -51,6 +57,7 @@ class SimulatorRegistration(msgspec.Struct, frozen=True):
     attn_tp_rank: int
     dcp_size: int
     dcp_rank: int
+    location: Optional[List[str]] = None
 
 
 class SimulatorTransferInfo(msgspec.Struct, frozen=True):
@@ -73,6 +80,7 @@ class SimulatorTransferTask(msgspec.Struct, frozen=True):
     target_aux_item_lens: List[List[int]]
     logical_bytes: int
     modeled_latency_s: float
+    link_name: Optional[str]
     aux_index: Optional[int]
     send_record: object
 
@@ -150,10 +158,10 @@ def modeled_transfer_latency_s(
 ) -> float:
     if logical_bytes < 0:
         raise ValueError("logical_bytes must be non-negative")
-    if bandwidth_gb_per_s <= 0:
-        raise ValueError("bandwidth_gb_per_s must be positive")
-    if fixed_latency_ms < 0:
-        raise ValueError("fixed_latency_ms must be non-negative")
+    if not math.isfinite(bandwidth_gb_per_s) or bandwidth_gb_per_s <= 0:
+        raise ValueError("bandwidth_gb_per_s must be finite and positive")
+    if not math.isfinite(fixed_latency_ms) or fixed_latency_ms < 0:
+        raise ValueError("fixed_latency_ms must be finite and non-negative")
     return fixed_latency_ms / 1000 + logical_bytes / (
         bandwidth_gb_per_s * _BYTES_PER_GB
     )
@@ -176,6 +184,16 @@ class SimulatorKVManager(CommonKVManager):
         disagg = get_disagg()
         self.bandwidth_gb_per_s = disagg.disaggregation_simulator_bandwidth_gb_per_s
         self.fixed_latency_ms = disagg.disaggregation_simulator_fixed_latency_ms
+        self.topology: Optional[SimulatorTopology] = load_simulator_topology(
+            disagg.disaggregation_simulator_topology
+        )
+        self.location = (
+            None
+            if disagg.disaggregation_simulator_location is None
+            else parse_simulator_location(disagg.disaggregation_simulator_location)
+        )
+        if self.topology is not None and self.location is not None:
+            self.topology.validate_location(self.location)
         self.enable_staging = False
         self.decode_kv_args_table: dict[str, SimulatorRegistration] = {}
         self._decode_aux_indices: dict[int, int] = {}
@@ -223,6 +241,7 @@ class SimulatorKVManager(CommonKVManager):
             attn_tp_rank=self.attn_tp_rank,
             dcp_size=self.dcp_size,
             dcp_rank=self.dcp_rank,
+            location=None if self.location is None else list(self.location),
         )
         return [_REGISTER_TAG, msgspec.msgpack.encode(registration)]
 
@@ -292,13 +311,14 @@ class SimulatorKVManager(CommonKVManager):
                 return
             targets = []
             target_aux_item_lens = []
+            target_locations = []
             for info in infos.values():
                 if info.is_dummy:
                     continue
                 targets.append((info.endpoint, info.dst_port))
-                target_aux_item_lens.append(
-                    self.decode_kv_args_table[info.peer_id].aux_item_lens
-                )
+                registration = self.decode_kv_args_table[info.peer_id]
+                target_aux_item_lens.append(registration.aux_item_lens)
+                target_locations.append(registration.location)
             total_kv_pages = max(
                 (info.num_kv_indices for info in infos.values()),
                 default=len(kv_indices),
@@ -317,10 +337,23 @@ class SimulatorKVManager(CommonKVManager):
             kv_replica_factor=self.get_kv_replica_factor(),
             target_aux_item_lens=target_aux_item_lens,
         )
+        selected_link = self._select_transfer_link(
+            logical_bytes=logical_bytes,
+            target_locations=target_locations,
+        )
+        # TODO(sgl-project/sglang#49916): Model shared-link contention and ongoing traffic.
         latency_s = modeled_transfer_latency_s(
             logical_bytes=logical_bytes,
-            bandwidth_gb_per_s=self.bandwidth_gb_per_s,
-            fixed_latency_ms=self.fixed_latency_ms,
+            bandwidth_gb_per_s=(
+                self.bandwidth_gb_per_s
+                if selected_link is None
+                else selected_link.bandwidth_gb_per_s
+            ),
+            fixed_latency_ms=(
+                self.fixed_latency_ms
+                if selected_link is None
+                else selected_link.fixed_latency_ms
+            ),
         )
         send_record = self.send_record(bootstrap_room)
         self.note_send_enqueued(bootstrap_room)
@@ -331,6 +364,7 @@ class SimulatorKVManager(CommonKVManager):
             target_aux_item_lens=target_aux_item_lens,
             logical_bytes=logical_bytes,
             modeled_latency_s=latency_s,
+            link_name=None if selected_link is None else selected_link.name,
             aux_index=aux_index if include_aux else None,
             send_record=send_record,
         )
@@ -339,6 +373,35 @@ class SimulatorKVManager(CommonKVManager):
 
     def _peer_id(self) -> str:
         return f"{self.local_ip}:{self.rank_port}"
+
+    def _select_transfer_link(
+        self,
+        *,
+        logical_bytes: int,
+        target_locations: List[Optional[List[str]]],
+    ) -> Optional[SimulatorLink]:
+        if (
+            self.topology is None
+            or self.location is None
+            or not target_locations
+            or any(location is None for location in target_locations)
+        ):
+            return None
+        links = [
+            self.topology.link_between(self.location, location)
+            for location in target_locations
+        ]
+        return max(
+            links,
+            key=lambda link: (
+                modeled_transfer_latency_s(
+                    logical_bytes=logical_bytes,
+                    bandwidth_gb_per_s=link.bandwidth_gb_per_s,
+                    fixed_latency_ms=link.fixed_latency_ms,
+                ),
+                link.name,
+            ),
+        )
 
     def _schedule_transfer(self, task: SimulatorTransferTask) -> None:
         with self._transfer_condition:
